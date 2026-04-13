@@ -1,0 +1,8 @@
+192.168.1.100 - - [22/Jan/2019:04:01:00 +0330] "GET /../../etc/passwd HTTP/1.1" 400 512 "-" "curl/7.68.0" "-"
+192.168.1.100 - - [22/Jan/2019:04:01:10 +0330] "GET /%2e%2e/%2e%2e/etc/passwd HTTP/1.1" 400 512 "-" "python-requests/2.25.1" "-"
+10.20.30.40 - - [22/Jan/2019:04:02:00 +0330] "GET /wp-admin/ HTTP/1.1" 404 1234 "-" "Mozilla/5.0 (compatible; DirBuster/1.0)" "-"
+172.16.0.50 - - [22/Jan/2019:04:03:00 +0330] "GET /search?id=1%20OR%201=1 HTTP/1.1" 200 5000 "-" "sqlmap/1.5" "-"
+10.10.10.10 - - [22/Jan/2019:04:04:00 +0330] "GET /Telerik.Web.UI.WebResource.axd?dp=XXXXXXXX HTTP/1.1" 200 1000 "-" "Mozilla/5.0 (Windows NT 10.0)" "-"
+192.168.1.50 - - [10/Oct/2024:14:00:00 -0700] "GET /../../etc/passwd HTTP/1.1" 400 512 "-" "curl/7.68.0"
+172.16.0.100 - - [10/Oct/2024:14:01:02 -0700] "GET /.git/config HTTP/1.1" 404 0 "-" "Mozilla/5.0 (compatible; Nikto/2.1.6)"
+10.20.30.40 - - [10/Oct/2024:14:02:00 -0700] "GET /search?id=1%20OR%201=1 HTTP/1.1" 200 5000 "-" "sqlmap/1.5"

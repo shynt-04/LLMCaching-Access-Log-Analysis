@@ -1,0 +1,16 @@
+{
+  "latency_p50_ms": 5.48,
+  "latency_p95_ms": 40448.23,
+  "latency_p99_ms": 47111.45,
+  "throughput_eps": 0.2,
+  "avg_input_tokens": 687.6,
+  "avg_output_tokens": 876.1,
+  "avg_payload_kb": 6.11,
+  "ttft_p50_ms": 35475.17,
+  "ttft_p95_ms": 42863.9,
+  "avg_gpu_util_pct": 0.0,
+  "cost_per_llm_call_usd": 0.0,
+  "total_cost_usd": 0.0,
+  "cache_hit_rate": 0.0,
+  "llm_calls_saved": 0
+}
