@@ -1,6 +1,6 @@
-# benchmark/gpu_sampler.py
+import threading
 import time
-
+from typing import Callable
 
 def sample_gpu_util(duration_s: float) -> float:
     """Sample average GPU utilization over a call duration.
@@ -17,6 +17,6 @@ def sample_gpu_util(duration_s: float) -> float:
             samples.append(float(util.gpu))
             time.sleep(0.05)
         return sum(samples) / len(samples) if samples else 0.0
-    except (Exception, KeyboardInterrupt):
-        # pynvml unavailable or interrupted — return 0
+    except Exception:
+        # pynvml unavailable (no NVIDIA GPU or not installed) — return 0
         return 0.0

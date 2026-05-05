@@ -76,25 +76,44 @@ class Pipeline:
         rule_result = self._rules.detect(log)
         log.rule_score = rule_result.max_score
 
-        ml_score = self._ml.score(log, window, rule_result, self._cve_paths)
-        log.ml_score = ml_score
+        content_score, behavior_score = self._ml.score(log, window, rule_result.max_score)
+        log.ml_score = max(content_score, behavior_score)
 
-        merged = merge(rule_result.max_score, ml_score,
+        merged = merge(rule_result.max_score, content_score, behavior_score,
                        self._buffer.multiplier(log.source_ip))
         if not should_flag(merged):
             return None
 
-        # LLM path — with or without cache
+        # Binary Classification Only: No LLM calls.
+        # analysis = {
+        #     "attack_type": rule_result.primary_type if rule_result.primary_type else "unknown",
+        #     "confidence": merged,
+        #     "explanation": "Flagged by local detection model.",
+        #     "recommended_actions": ["monitor"],
+        #     "cve_refs": [],
+        #     "attack_stage": "unknown",
+        #     "ttft_ms": 0,
+        #     "input_tokens": 0,
+        #     "output_tokens": 0,
+        #     "matched_rules": rule_result.matched_rules if hasattr(rule_result, 'matched_rules') else [],
+        #     "attack_types": rule_result.attack_types if hasattr(rule_result, 'attack_types') else []
+        # }
+
+        # Cache lookup logic removed/ignored as LLM is prohibited
+
         if self._cache is not None:
             cached_analysis, emb = self._cache.lookup(log)
             if cached_analysis:
+                cached_analysis["matched_rules"] = rule_result.matched_rules
                 return self._reporter.build(log, window, cached_analysis,
                                              merged, cache_hit=True)
-            analysis = self._llm.analyze(str(log), self._window_summary(window))
+            analysis = self._llm.analyze(str(log), self._window_summary(window), matched_rules=rule_result.matched_rules)
+            analysis["matched_rules"] = rule_result.matched_rules
             self._cache.store(emb, analysis)
         else:
             # No cache — always call LLM
-            analysis = self._llm.analyze(str(log), self._window_summary(window))
+            analysis = self._llm.analyze(str(log), self._window_summary(window), matched_rules=rule_result.matched_rules)
+            analysis["matched_rules"] = rule_result.matched_rules
 
         return self._reporter.build(log, window, analysis, merged, cache_hit=False)
 

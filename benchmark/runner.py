@@ -1,17 +1,10 @@
-# benchmark/runner.py
-import sys
-import os
-import time
-import json
-import threading
+import time, json
 from pathlib import Path
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-
 from src.pipeline import Pipeline
 from benchmark.metrics import BenchmarkMetrics
 from benchmark.gpu_sampler import sample_gpu_util
-
+import threading
+import argparse
 
 def run(log_path: str, use_cache: bool, output_path: str) -> dict:
     """Run the full pipeline on a log file and record all benchmark metrics.
@@ -62,15 +55,12 @@ def run(log_path: str, use_cache: bool, output_path: str) -> dict:
     Path(output_path).write_text(json.dumps(summary, indent=2))
     return summary
 
-
 if __name__ == "__main__":
-    import argparse
-    p = argparse.ArgumentParser(description="Benchmark pipeline performance")
-    p.add_argument("--log",   default="data/benchmark/load_10k.log")
-    p.add_argument("--cache", action="store_true")
-    p.add_argument("--out",   default="benchmark/results/run.json")
-    args = p.parse_args()
-    result = run(args.log, args.cache, args.out)
-    print(f"\nBenchmark Results ({'with cache' if args.cache else 'no cache'}):")
-    for k, v in result.items():
-        print(f"  {k}: {v}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--log", required=True, help="Path to log file")
+    parser.add_argument("--out", required=True, help="Output JSON path")
+    parser.add_argument("--cache", action="store_true", help="Enable cache")
+    args = parser.parse_args()
+    print(f"Running benchmark on {args.log} (cache={args.cache})")
+    run(args.log, args.cache, args.out)
+    print(f"Results saved to {args.out}")

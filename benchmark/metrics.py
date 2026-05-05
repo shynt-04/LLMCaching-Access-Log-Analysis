@@ -1,4 +1,3 @@
-# benchmark/metrics.py
 from dataclasses import dataclass, field
 import time
 
@@ -31,7 +30,7 @@ class BenchmarkMetrics:
 
     def summary(self) -> dict:
         import numpy as np
-        lats     = np.array(self.latencies_ms) if self.latencies_ms else np.array([0.0])
+        lats     = np.array(self.latencies_ms)
         llm_n    = max(len(self.input_tokens), 1)
         toks_in  = sum(self.input_tokens)
         toks_out = sum(self.output_tokens)
@@ -42,7 +41,7 @@ class BenchmarkMetrics:
             "latency_p95_ms": round(float(np.percentile(lats, 95)), 2),
             "latency_p99_ms": round(float(np.percentile(lats, 99)), 2),
             # Throughput
-            "throughput_eps": round(self.total_events / max(self.elapsed_wall_s, 0.001), 1),
+            "throughput_eps": round(self.total_events / self.elapsed_wall_s, 1),
             # Data transfer — payload size to Ollama, not $
             "avg_input_tokens":  round(toks_in  / llm_n, 1),
             "avg_output_tokens": round(toks_out / llm_n, 1),

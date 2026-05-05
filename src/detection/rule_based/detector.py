@@ -74,4 +74,11 @@ class RuleDetector:
             return log.query_string
         elif field_name == "user_agent":
             return log.user_agent
+        elif field_name == "any":
+            parts = [log.path or ""]
+            if log.query_string:
+                parts.append(log.query_string)
+            if log.user_agent:
+                parts.append(log.user_agent)
+            return " ".join(parts)
         return None

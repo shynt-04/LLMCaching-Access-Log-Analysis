@@ -1,102 +1,150 @@
 # src/llm/client.py
+"""Multi-provider LLM client — supports Ollama (local) and Gemini API (cloud).
+
+Provider selection via LLM_PROVIDER env var:
+  - "ollama" (default): local inference, $0 cost, higher latency
+  - "gemini": cloud API, fast TTFT, requires GEMINI_API_KEY
+"""
 import os, json, time
-import ollama as _ollama
 from pathlib import Path
-from src.config import OLLAMA_MODEL, OLLAMA_HOST, OLLAMA_NUM_CTX, OLLAMA_NUM_PREDICT, OLLAMA_TEMPERATURE
+from src.config import (
+    OLLAMA_MODEL, OLLAMA_NUM_CTX, OLLAMA_NUM_PREDICT,
+    OLLAMA_TEMPERATURE, GEMINI_MODEL,
+)
 
-_PROMPT_PATH = Path(__file__).parent / "prompts" / "classify.txt"
-_PROMPT = _PROMPT_PATH.read_text() if _PROMPT_PATH.exists() else ""
+_PROMPT = Path("src/llm/prompts/classify.txt").read_text()
 
-# Ollama options applied to every call
+# Ollama-specific options
 _OPTIONS = {
     "num_ctx":     OLLAMA_NUM_CTX,
     "num_predict": OLLAMA_NUM_PREDICT,
     "temperature": OLLAMA_TEMPERATURE,
-    # Thinking mode deliberately omitted — <|think|> not in system prompt
-    # Enabling it would add ~500ms for no benefit on structured JSON tasks
 }
 
+
 class LLMClient:
-    def __init__(self):
-        host  = os.environ.get("OLLAMA_HOST", OLLAMA_HOST)
-        model = os.environ.get("OLLAMA_MODEL", OLLAMA_MODEL)
+    """Unified LLM interface — dispatches to Ollama or Gemini based on config."""
+
+    def __init__(self) -> None:
+        self._provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
+        if self._provider == "gemini":
+            self._init_gemini()
+        else:
+            self._init_ollama()
+
+    # ── Gemini setup ──────────────────────────────────────────────────
+    def _init_gemini(self) -> None:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY must be set when LLM_PROVIDER=gemini")
+        import google.genai as genai
+        genai.configure(api_key=api_key)
+        model_name = os.environ.get("GEMINI_MODEL", GEMINI_MODEL)
+        self._gemini_model = genai.GenerativeModel(
+            model_name,
+            generation_config={"response_mime_type": "application/json"},
+        )
+
+    # ── Ollama setup ──────────────────────────────────────────────────
+    def _init_ollama(self) -> None:
+        import ollama as _ollama
+        host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self._model = os.environ.get("OLLAMA_MODEL", OLLAMA_MODEL)
         self._client = _ollama.Client(host=host)
-        self._model  = model
-        self._verify_model()
-
-    def _verify_model(self) -> None:
-        """Fail fast if the model is not available in Ollama."""
         try:
-            # Ollama SDK returns Pydantic objects — use attribute access
-            response = self._client.list()
-            available = [m.model for m in response.models]
-            if self._model not in available and f"{self._model}:latest" not in available:
-                raise RuntimeError(
-                    f"Model '{self._model}' not found in Ollama. "
-                    f"Run: ollama pull {self._model}"
-                )
+            available = [m.model for m in self._client.list().models]
+            if self._model not in available:
+                print(f"[WARN] Model '{self._model}' not found. Run: ollama pull {self._model}")
         except Exception as e:
-            print(f"[Ollama] Connection Failed: {e}")
-            pass
+            print(f"[WARN] Could not connect to Ollama: {e}")
 
-    def analyze(self, event_summary: str, window_summary: str) -> dict:
-        """
-        Call Gemma4 E4B and return parsed analysis with token counts and TTFT.
-        Uses streaming to measure time-to-first-token (TTFT) separately from
-        total generation time.
-        """
+    # ── Public API ────────────────────────────────────────────────────
+    def analyze(
+        self,
+        event_summary: str,
+        window_summary: str,
+        matched_rules: list | None = None,
+    ) -> dict:
+        """Analyze a flagged log event and return structured JSON analysis."""
+        user_content = f"Event:\n{event_summary}\n\nContext:\n{window_summary}"
+        if matched_rules:
+            user_content += f"\n\nMatched Local Rules:\n{matched_rules}"
+
+        if self._provider == "gemini":
+            return self._analyze_gemini(user_content)
+        return self._analyze_ollama(user_content)
+
+    # ── Gemini inference ──────────────────────────────────────────────
+    def _analyze_gemini(self, user_content: str) -> dict:
+        """Call Gemini API — returns structured JSON with token counts."""
+        t_start = time.perf_counter()
+        try:
+            # Prepend system prompt as user context (Gemini simple mode)
+            response = self._gemini_model.generate_content(
+                _PROMPT + "\n\n" + user_content
+            )
+            ttft_ms = (time.perf_counter() - t_start) * 1000
+
+            raw = response.text.strip()
+            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            analysis = json.loads(raw)
+            analysis.update({
+                "ttft_ms": round(ttft_ms, 2),
+                "input_tokens": getattr(
+                    response.usage_metadata, "prompt_token_count", 0
+                ),
+                "output_tokens": getattr(
+                    response.usage_metadata, "candidates_token_count", 0
+                ),
+            })
+            return analysis
+        except Exception as e:
+            print(f"[ERROR] Gemini API failed: {e}")
+            return self.fallback()
+
+    # ── Ollama inference ──────────────────────────────────────────────
+    def _analyze_ollama(self, user_content: str) -> dict:
+        """Call local Ollama — streams response and measures TTFT."""
         messages = [
-            {"role": "system",  "content": _PROMPT},
-            {"role": "user",    "content": f"Event:\n{event_summary}\n\nContext:\n{window_summary}"},
+            {"role": "system", "content": _PROMPT},
+            {"role": "user",   "content": user_content},
         ]
-
         chunks, ttft_ms = [], None
-        input_tokens, output_tokens = 0, 0
+        input_tokens = output_tokens = 0
         t_start = time.perf_counter()
 
-        # debug only
-        # print("[PROMPT]:", _PROMPT)
-        # print("[MESSAGES]:", messages)
-
         try:
-            stream = self._client.chat(
-                model=self._model,
-                messages=messages,
-                stream=True,
-                options=_OPTIONS,
-            )
-
-            for chunk in stream:
-                # Ollama SDK returns Pydantic objects — use attribute access
-                content = chunk.message.content
+            for chunk in self._client.chat(
+                model=self._model, messages=messages,
+                stream=True, options=_OPTIONS,
+            ):
+                content = chunk["message"]["content"]
                 if content and ttft_ms is None:
                     # Record time of first non-empty token
                     ttft_ms = (time.perf_counter() - t_start) * 1000
                 chunks.append(content)
-
                 # Final chunk carries usage stats
-                if getattr(chunk, "done", False):
-                    input_tokens  = getattr(chunk, "prompt_eval_count", 0) or 0
-                    output_tokens = getattr(chunk, "eval_count", 0) or 0
+                if chunk.get("done"):
+                    input_tokens  = chunk.get("prompt_eval_count", 0)
+                    output_tokens = chunk.get("eval_count", 0)
 
             raw = "".join(chunks).strip()
-            # Strip markdown fences if model wraps the JSON
             raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-
             analysis = json.loads(raw)
             analysis["ttft_ms"]       = round(ttft_ms or 0, 2)
             analysis["input_tokens"]  = input_tokens
             analysis["output_tokens"] = output_tokens
             return analysis
         except Exception as e:
-            print(f"[Ollama Fallback] Error during analysis: {e}")
+            print(f"[ERROR] Ollama failed: {e}")
             return self.fallback()
 
+    # ── Fallback ──────────────────────────────────────────────────────
     def fallback(self) -> dict:
-        """Safe default when Ollama is unavailable or returns invalid JSON."""
+        """Safe default when LLM is unavailable or returns invalid JSON."""
         return {
             "attack_type": "unknown", "confidence": 0.0,
-            "explanation": "LLM unavailable — manual review required.",
+            "explanation": "LLM analysis failed or unavailable — manual review required.",
             "recommended_actions": ["monitor"],
             "cve_refs": [], "attack_stage": "unknown",
             "ttft_ms": None, "input_tokens": 0, "output_tokens": 0,

@@ -1,27 +1,24 @@
 # src/detection/merger.py
-"""Score merger — combines rule-based and ML scores with temporal amplification.
+from src.config import CONTENT_WEIGHT, BEHAVIOR_WEIGHT, RULE_WEIGHT, TEMPORAL_CAP, ALERT_THRESHOLD
 
-ML gets higher weight (0.6) because it generalizes to attack variants
-that rules miss. Temporal multiplier rewards clusters of suspicious events.
-"""
-from src.config import RULE_WEIGHT, ML_WEIGHT, TEMPORAL_CAP, ALERT_THRESHOLD
+def merge(
+    rule_score: float,
+    content_score: float,
+    behavior_score: float,
+    temporal_mult: float,
+) -> float:
+    """Combine three detection signals into a single threat score.
 
-
-def merge(rule: float, ml: float, temporal_mult: float) -> float:
-    """Weighted combination of rule and ML scores with temporal amplification.
-
-    Args:
-        rule: Rule-based score in [0, 1].
-        ml: ML anomaly score in [0, 1].
-        temporal_mult: Temporal multiplier in [1.0, TEMPORAL_CAP].
-
-    Returns:
-        Merged score in [0, 1].
+    Weight rationale:
+    - content (0.5): highest — TF-IDF+LightGBM is most accurate for payload detection
+    - behavior (0.3): medium — captures rate/temporal attacks content misses
+    - rule (0.2): lowest — rules are subsumed by ML but kept for CVE/known patterns
+    Temporal multiplier rewards clusters of suspicious events in same window.
     """
-    base = RULE_WEIGHT * rule + ML_WEIGHT * ml
+    base = (CONTENT_WEIGHT  * content_score +
+            BEHAVIOR_WEIGHT * behavior_score +
+            RULE_WEIGHT     * rule_score)
     return min(base * temporal_mult, 1.0)
 
-
 def should_flag(score: float) -> bool:
-    """Check if merged score exceeds the alert threshold."""
     return score >= ALERT_THRESHOLD

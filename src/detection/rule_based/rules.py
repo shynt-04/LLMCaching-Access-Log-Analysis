@@ -1,208 +1,112 @@
-# src/detection/rule_based/rules.py
-"""Rule definitions for pattern-based attack detection.
-
-Each rule matches a specific attack pattern against a log field.
-Rules are frozen dataclasses with pre-compiled regex patterns for
-zero-allocation matching at runtime.
-"""
+import json, re
 from dataclasses import dataclass
-import re
-
+from pathlib import Path
 
 @dataclass(frozen=True)
 class Rule:
     name: str
-    score: float        # base score if pattern matches (0.0–1.0)
+    score: float
     pattern: re.Pattern
-    field: str          # "path" | "query_string" | "user_agent"
-    attack_type: str    # "path_traversal" | "sqli" | "dir_scan" | "cve"
+    field: str          # "path" | "query_string" | "user_agent" | "any"
+    attack_type: str
+    source: str         # "custom" | "crs"
+
+# CRS target keywords that map to fields we have in access logs
+# If a rule targets ARGS or REQUEST_FILENAME, it applies to path/query
+# If it targets REQUEST_HEADERS:User-Agent, it applies to user_agent
+# If it only targets REQUEST_HEADERS:Referer or cookies, skip (no access log field)
+_USABLE_TARGETS = {"ARGS", "ARGS_NAMES", "REQUEST_FILENAME", "XML:/*", "REQUEST_LINE",
+                   "REQUEST_URI_RAW", "FILES", "FILES_NAMES"}
+_UA_TARGETS = {"REQUEST_HEADERS:User-Agent"}
+_SKIP_ONLY_TARGETS = {"REQUEST_HEADERS:Referer", "REQUEST_COOKIES",
+                      "REQUEST_COOKIES_NAMES", "REQUEST_HEADERS:Cookie"}
 
 
-RULES: list[Rule] = [
-    # ─── Path Traversal ─────────────────────────────────────────
-    Rule(
-        name="path_traversal_plain",
-        score=0.70,
-        pattern=re.compile(r'\.\.[/\\]'),
-        field="path",
-        attack_type="path_traversal",
-    ),
-    Rule(
-        name="path_traversal_encoded",
-        score=0.75,
-        # URL-encoded and double-encoded ../ variants
-        pattern=re.compile(r'%2e%2e|%252e|\.\.%2f|%2e%2e%2f', re.IGNORECASE),
-        field="path",
-        attack_type="path_traversal",
-    ),
-    Rule(
-        name="path_traversal_backslash",
-        score=0.70,
-        # Backslash variants: ..\ or encoded %5c
-        pattern=re.compile(r'\.\.%5c|%2e%2e%5c', re.IGNORECASE),
-        field="path",
-        attack_type="path_traversal",
-    ),
-    Rule(
-        name="path_traversal_double_dot_slash",
-        score=0.70,
-        # Double-dot-slash: ....//
-        pattern=re.compile(r'\.{3,}/|\.{2,}/\.{2,}/'),
-        field="path",
-        attack_type="path_traversal",
-    ),
-    Rule(
-        name="path_traversal_in_query",
-        score=0.65,
-        pattern=re.compile(r'\.\.[/\\]'),
-        field="query_string",
-        attack_type="path_traversal",
-    ),
-    # ─── SQL Injection ───────────────────────────────────────────
-    Rule(
-        name="sqli_or_based",
-        score=0.80,
-        pattern=re.compile(
-            r"(\bOR\b\s+\S+=\S+|'\s*OR\s*'1'\s*=\s*'1|\bOR\b\s+1\s*=\s*1)",
-            re.IGNORECASE,
-        ),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_union_select",
-        score=0.85,
-        pattern=re.compile(r'\bUNION\b.+\bSELECT\b', re.IGNORECASE),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_comment_terminator",
-        score=0.70,
-        pattern=re.compile(r"(--\s*$|;\s*--\s*$|'\s*--)", re.IGNORECASE),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_drop_table",
-        score=0.90,
-        pattern=re.compile(r'\bDROP\b\s+\bTABLE\b', re.IGNORECASE),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_sleep",
-        score=0.75,
-        pattern=re.compile(r'\bSLEEP\s*\(|WAITFOR\s+DELAY|BENCHMARK\s*\(', re.IGNORECASE),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_xp_cmdshell",
-        score=0.90,
-        pattern=re.compile(r'\bEXEC\b\s+\bxp_cmdshell\b', re.IGNORECASE),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_load_file",
-        score=0.85,
-        pattern=re.compile(r'\bLOAD_FILE\b\s*\(', re.IGNORECASE),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_information_schema",
-        score=0.80,
-        pattern=re.compile(r'\binformation_schema\b', re.IGNORECASE),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    Rule(
-        name="sqli_and_based",
-        score=0.70,
-        pattern=re.compile(
-            r"\bAND\b\s+(1\s*=\s*1|\bSLEEP\b|\(SELECT\b)",
-            re.IGNORECASE,
-        ),
-        field="query_string",
-        attack_type="sqli",
-    ),
-    # ─── Directory Scanning ──────────────────────────────────────
-    Rule(
-        name="dir_scan_common",
-        score=0.50,
-        pattern=re.compile(
-            r'/(wp-admin|wp-login|phpmyadmin|phpMyAdmin|pma|\.git|\.env|'
-            r'admin|backup|config|\.htaccess|\.htpasswd|server-status|'
-            r'server-info|swagger-ui|api-docs|debug|console|actuator)'
-            r'(/|$|\?|\.)',
-            re.IGNORECASE,
-        ),
-        field="path",
-        attack_type="dir_scan",
-    ),
-    Rule(
-        name="dir_scan_backup_files",
-        score=0.55,
-        pattern=re.compile(
-            r'\.(sql|bak|old|orig|swp|zip|tar\.gz|tgz)$',
-            re.IGNORECASE,
-        ),
-        field="path",
-        attack_type="dir_scan",
-    ),
-    Rule(
-        name="dir_scan_scanner_ua",
-        score=0.60,
-        pattern=re.compile(
-            r'(DirBuster|Nikto|gobuster|dirsearch|sqlmap|Nmap|masscan)',
-            re.IGNORECASE,
-        ),
-        field="user_agent",
-        attack_type="dir_scan",
-    ),
-    # ─── CVE Exploits ────────────────────────────────────────────
-    Rule(
-        name="cve_telerik",
-        score=0.90,
-        pattern=re.compile(
-            r'Telerik\.Web\.UI\.(WebResource|DialogHandler)',
-            re.IGNORECASE,
-        ),
-        field="path",
-        attack_type="cve",
-    ),
-    Rule(
-        name="cve_liferay",
-        score=0.90,
-        pattern=re.compile(
-            r'/api/jsonws|/c/portal/json_service',
-            re.IGNORECASE,
-        ),
-        field="path",
-        attack_type="cve",
-    ),
-    Rule(
-        name="cve_log4shell",
-        score=0.95,
-        pattern=re.compile(
-            r'\$\{jndi:|'
-            r'\$\{\$\{lower:j\}ndi:|'
-            r'\$\{\$\{::-j\}\$\{::-n\}\$\{::-d\}\$\{::-i\}:',
-            re.IGNORECASE,
-        ),
-        field="user_agent",
-        attack_type="cve",
-    ),
-    Rule(
-        name="cve_spring4shell",
-        score=0.90,
-        pattern=re.compile(
-            r'class\.module\.classLoader',
-            re.IGNORECASE,
-        ),
-        field="query_string",
-        attack_type="cve",
-    ),
+def _should_include_crs_rule(target: str) -> str | None:
+    """Determine the field mapping for a CRS rule target string.
+
+    Returns 'any', 'user_agent', or None (skip).
+    A target like 'REQUEST_COOKIES|ARGS|XML:/*' contains ARGS, so we include it.
+    A target like 'REQUEST_HEADERS:Referer' alone has no access log equivalent.
+    """
+    parts = set(target.replace("!", "").split("|"))
+
+    # If it contains usable targets (ARGS, REQUEST_FILENAME, etc.), apply to path/query
+    if parts & _USABLE_TARGETS:
+        return "any"
+    # If it only has User-Agent, apply to user_agent
+    if parts & _UA_TARGETS:
+        return "user_agent"
+    # Otherwise skip (cookie-only, referer-only rules)
+    return None
+
+
+def _load_crs_rules(crs_json: str = "data/rules/crs_rules.json") -> list[Rule]:
+    """Load pre-parsed CRS rules from JSON (built by crs_parser.py).
+
+    Filters out rules that target HTTP headers/cookies not present in
+    access logs (Referer-only, Cookie-only). Maps remaining rules to
+    the appropriate NormalizedLog field.
+    """
+    if not Path(crs_json).exists():
+        return []
+    entries = json.loads(Path(crs_json).read_text())
+    rules = []
+    for e in entries:
+        field = _should_include_crs_rule(e.get("target", ""))
+        if field is None:
+            continue  # skip header/cookie-only rules
+
+        # Skip overly broad regexes that match everything
+        regex = e.get("regex", "")
+        if regex in ("^[^#]+", ".*", ".+"):
+            continue
+
+        # Skip known false-positive CRS rules on access log data
+        rule_id = e.get("id", 0)
+        if rule_id in (942130,):  # 942130 triggers on numeric query params like model=9893
+            continue
+
+        try:
+            rules.append(Rule(
+                name=f"crs_{e['id']}",
+                score=0.75,              # uniform CRS base score
+                pattern=re.compile(regex, re.IGNORECASE),
+                field=field,
+                attack_type=e["attack_type"],
+                source="crs",
+            ))
+        except re.error:
+            continue  # skip if regex fails to compile
+    return rules
+
+# Custom rules — high-confidence CVE patterns not in CRS
+_CUSTOM_RULES: list[Rule] = [
+    Rule("cve_telerik", 0.92,
+         re.compile(r'Telerik\.Web\.UI\.(WebResource|DialogHandler)', re.I),
+         "path", "cve", "custom"),
+    Rule("cve_liferay", 0.92,
+         re.compile(r'/api/jsonws|/c/portal/json_service', re.I),
+         "path", "cve", "custom"),
+    Rule("cve_log4shell", 0.95,
+         re.compile(r'\$\{.*j.*n.*d.*i.*:', re.I),
+         "any", "cve", "custom"),
+    Rule("cve_spring4shell", 0.92,
+         re.compile(r'class\.module\.classLoader', re.I),
+         "any", "cve", "custom"),
+    Rule("path_traversal_plain", 0.70,
+         re.compile(r'\.\.[/\\]'),
+         "path", "path_traversal", "custom"),
+    Rule("path_traversal_encoded", 0.75,
+         re.compile(r'%2e%2e|%252e|\.\.%2f', re.I),
+         "path", "path_traversal", "custom"),
+    Rule("dir_scan", 0.50,
+         re.compile(r'/(wp-admin|phpmyadmin|\.git|\.env|backup|config)(/|$)', re.I),
+         "path", "dir_scan", "custom"),
+    Rule("scanner_ua_dirbuster", 0.65,
+         re.compile(r'DirBuster|Nikto|sqlmap|nmap|masscan|wpscan', re.I),
+         "user_agent", "dir_scan", "custom"),
 ]
+
+# Combined ruleset — custom first (faster, higher confidence)
+RULES: list[Rule] = _CUSTOM_RULES + _load_crs_rules()

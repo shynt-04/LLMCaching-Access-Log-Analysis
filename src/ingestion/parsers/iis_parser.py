@@ -69,7 +69,15 @@ class IISParser(BaseParser):
             referer = raw_data.get("cs(Referer)", "-")
             if referer == "-":
                 referer = None
-            status = int(raw_data.get("sc-status", 0))
+                
+            status_raw = raw_data.get("sc-status", "200")
+            try:
+                status = int(status_raw)
+                if status == 0:
+                    status = 200
+            except ValueError:
+                status = 200
+                
             source_ip = raw_data.get("c-ip", raw_data.get("s-ip", ""))
             method = raw_data.get("cs-method", "GET")
 

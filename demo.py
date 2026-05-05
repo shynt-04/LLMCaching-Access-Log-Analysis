@@ -1,6 +1,8 @@
 import sys
 import os
 import time
+import warnings
+warnings.filterwarnings("ignore")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -36,23 +38,28 @@ def run_demo(use_cache: bool):
         total_processing_time += elapsed_ms
         
         if alert:
-            print(f"  -> Status: FLAGGED (Alert Generated)")
-            is_cache_hit = getattr(alert, 'cache_hit', False)
-            print(f"  -> Cache Hit: {is_cache_hit}")
-            print(f"  -> LLM Response: {alert.analysis}")
+            print(f"  -> Status: FLAGGED (Malicious 1)")
+            print(f"  -> Merged Score: {alert.merged_score:.4f}")
+            print(f"  -> Phase 1 (Rules): Score: {alert.rule_score:.4f}, Matched: {alert.matched_rules}")
+            print(f"  -> Phase 2 (ML): Score: {alert.ml_score:.4f}")
+            print(f"  -> Phase 3/4 (LLM): Cache Hit: {alert.cache_hit}")
+            print(f"     - Attack Type: {alert.analysis.get('attack_type', 'unknown')}")
+            print(f"     - Explanation: {alert.analysis.get('explanation', 'unknown')}")
+            print(f"     - Confidence: {alert.analysis.get('confidence', 'unknown')}")
+            print(f"     - CVE refs: {alert.analysis.get('cve_refs', 'unknown')}")
             print(f"  -> Latency: {elapsed_ms:.2f} ms")
         else:
-            print(f"  -> Status: PASSED (Benign)")
+            print(f"  -> Status: PASSED (Benign 0)")
             print(f"  -> Latency: {elapsed_ms:.2f} ms")
             
     print(f"\n=> Total Pipeline Processing Time: {total_processing_time:.2f} ms")
 
 if __name__ == "__main__":
     print("PHASE 5: END-TO-END DEMONSTRATION")
-    print("Showcasing: Log ingestion -> Processing steps -> LLM interaction -> Final output")
+    print("Showcasing: Log ingestion -> Processing steps -> Final output")
     
     # Run WITHOUT Cache
-    run_demo(use_cache=False)
+    # run_demo(use_cache=False)
     
     # Run WITH Cache
     run_demo(use_cache=True)

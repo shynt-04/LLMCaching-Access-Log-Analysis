@@ -1,51 +1,45 @@
-# src/detection/ml/detector.py
-"""ML-based anomaly detector using pre-trained Isolation Forest.
-
-Loads the serialized model and scaler, then scores new events.
-Higher scores mean more anomalous behavior.
-"""
 import pickle
 import numpy as np
-from pathlib import Path
-from src.detection.feature_extractor import extract
+from scipy.sparse import hstack
 from src.ingestion.schema import NormalizedLog
-
-DEFAULT_MODEL_PATH = Path("data/models/isolation_forest.pkl")
-
+from src.detection.ml.feature_extractor import build_content_text, extract_behavioral
 
 class MLDetector:
-    """Load trained IF model and score incoming log events."""
+    def __init__(self):
+        with open("data/models/lgbm_content.pkl",  "rb") as f:
+            c = pickle.load(f)
+        with open("data/models/lgbm_behavior.pkl", "rb") as f:
+            b = pickle.load(f)
 
-    def __init__(self, model_path: str | Path | None = None) -> None:
-        path = Path(model_path) if model_path else DEFAULT_MODEL_PATH
-        with open(path, "rb") as f:
-            saved = pickle.load(f)
-        self._model = saved["model"]
-        self._scaler = saved["scaler"]
+        self._content_model  = c["model"]
+        self._vectorizer     = c["vectorizer"]
+        self._behavior_model = b["model"]
+        self._behavior_scaler = b["scaler"]
 
-    def score(self, log: NormalizedLog, window: list[NormalizedLog],
-              rule_result=None, cve_paths: set[str] | None = None) -> float:
-        """Return anomaly score in [0, 1]. Higher means more anomalous.
+    def score(
+        self,
+        log: NormalizedLog,
+        window: list[NormalizedLog],
+        rule_max_score: float,
+    ) -> tuple[float, float]:
+        """Return (content_score, behavior_score), both in [0, 1].
 
-        IF's decision_function returns negative for anomalies.
-        We invert and normalize to align with rule score convention.
+        Content score: probability of attack from URL/path/query text.
+        Behavior score: probability of attack from temporal/rate patterns.
+        Scores are combined in merger.py with configurable weights.
         """
-        vec = extract(log, window, rule_result, cve_paths).reshape(1, -1)
-        X = self._scaler.transform(vec)
-        raw = self._model.decision_function(X)[0]
+        # Content score — TF-IDF + LightGBM multiclass
+        text = build_content_text(log)
+        X_content = self._vectorizer.transform([text])
+        # predict_proba returns P(class) for each class; sum non-zero classes
+        probs = self._content_model.predict_proba(X_content)[0]
+        content_score = float(1.0 - probs[0])  # P(not normal)
 
-        # Typical IF range ~[-0.5, 0.5]; clip before mapping to [0, 1]
-        return float(1.0 - (np.clip(raw, -0.5, 0.5) + 0.5))
+        # Behavior score — tabular LightGBM binary
+        beh = extract_behavioral(log, window, rule_max_score).reshape(1, -1)
+        beh_scaled = self._behavior_scaler.transform(beh)
+        behavior_score = float(
+            self._behavior_model.predict_proba(beh_scaled)[0][1]  # P(attack)
+        )
 
-    def score_batch(self, vectors: np.ndarray) -> np.ndarray:
-        """Score a batch of pre-extracted feature vectors.
-
-        Args:
-            vectors: shape (n, 17) feature matrix.
-
-        Returns:
-            numpy array shape (n,) with scores in [0, 1].
-        """
-        X = self._scaler.transform(vectors)
-        raw = self._model.decision_function(X)
-        return 1.0 - (np.clip(raw, -0.5, 0.5) + 0.5)
+        return content_score, behavior_score
