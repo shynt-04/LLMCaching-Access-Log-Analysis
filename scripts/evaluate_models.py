@@ -48,6 +48,7 @@ def entry_to_log(e: dict) -> NormalizedLog:
         status_code=e.get("status", 200),
         source="synthetic",
         query_string=e.get("query", "") or None,
+        content=e.get("content", "") or None,
         user_agent=e.get("user_agent", ""),
     )
 
@@ -61,7 +62,7 @@ def evaluate_content_model(entries: list[dict]) -> dict:
     vectorizer = c["vectorizer"]
 
     texts = [
-        f"{e.get('path', '')} {e.get('query', '')} {e.get('user_agent', '')[:100]}"
+        f"{e.get('path', '')} {e.get('query', '')} {e.get('content', '')} {e.get('user_agent', '')[:100]}"
         for e in entries
     ]
     true_labels = [1 if e.get("label", 0) > 0 else 0 for e in entries]

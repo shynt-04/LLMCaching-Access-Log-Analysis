@@ -7,6 +7,7 @@ CACHE_SIMILARITY   = 0.85
 CONTENT_WEIGHT     = 0.5   # weight for TF-IDF+LightGBM content score
 BEHAVIOR_WEIGHT    = 0.3   # weight for behavioral score
 RULE_WEIGHT        = 0.2   # weight for rule-based score
+CONTENT_FLOOR_FACTOR = 0.85 # floor factor: content_score * this must exceed threshold alone
 TEMPORAL_CAP       = 1.5
 
 # Ollama settings

@@ -19,6 +19,7 @@ class NormalizedLog(BaseModel):
     user_agent: Optional[str] = None
     response_size: Optional[int] = None
     query_string: Optional[str] = None
+    content: Optional[str] = None
     referer: Optional[str] = None
     raw_line: str = ""                 
 
@@ -39,6 +40,13 @@ class NormalizedLog(BaseModel):
     @field_validator("query_string", mode="before")
     @classmethod
     def url_decode_query(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str):
+            return unquote(unquote(v))
+        return v
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def url_decode_content(cls, v: Optional[str]) -> Optional[str]:
         if isinstance(v, str):
             return unquote(unquote(v))
         return v

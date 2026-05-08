@@ -21,36 +21,48 @@ def train_content_model(train_path: str = "data/synthetic/train.jsonl") -> None:
     """
     entries = [json.loads(l) for l in Path(train_path).read_text().splitlines()]
 
-    texts  = [f"{e.get('path', '')} {e.get('query','')} {e.get('user_agent','')[:100]}"
+    texts  = [f"{e.get('path', '')} {e.get('query','')} {e.get('content','')} {e.get('user_agent','')[:100]}"
               for e in entries]
     labels = [1 if e.get("label", 0) > 0 else 0 for e in entries]
 
     # char_wb: char n-grams with word boundaries — handles URL segments well
     vectorizer = TfidfVectorizer(
         analyzer="char_wb",
-        ngram_range=(2, 5),       # expanded from (2,4) — captures longer attack patterns
-        max_features=80_000,      # increased from 50K — more data supports it
+        ngram_range=(2, 5),       # captures substrings like 'UNION', '../', '<script'
+        max_features=30_000,      # reduced from 80K — fewer features = harder to memorize
         sublinear_tf=True,        # log(1+tf) dampens high-freq terms
-        min_df=2,                 # ignore features appearing only once (noise)
-        max_df=0.95,              # ignore features in >95% of docs (stopwords)
+        min_df=3,                 # ignore features appearing < 3 times (noise)
+        max_df=0.90,              # ignore features in >90% of docs (common substrings)
     )
     X = vectorizer.fit_transform(texts)
 
+    # Split for early stopping to prevent overfitting
+    from sklearn.model_selection import train_test_split
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, labels, test_size=0.15, random_state=42, stratify=labels
+    )
+
     model = LGBMClassifier(
-        n_estimators=500,         # increased from 300 — more data now
-        learning_rate=0.03,       # reduced — slower learning, better generalization
-        num_leaves=63,
-        max_depth=8,
-        min_child_samples=20,     # prevents overfitting on rare payloads
+        n_estimators=500,         # max iterations — early stopping will cut short
+        learning_rate=0.05,       # faster learning, rely on early stopping
+        num_leaves=31,            # reduced from 63 — shallower trees generalize better
+        max_depth=6,              # reduced from 8
+        min_child_samples=50,     # increased from 20 — prevents overfitting on rare payloads
         class_weight="balanced",  # handles label imbalance from synthetic gen
-        subsample=0.8,            # row sampling — reduces overfitting
-        colsample_bytree=0.8,     # column sampling
-        reg_alpha=0.1,            # L1 regularization
-        reg_lambda=1.0,           # L2 regularization
+        subsample=0.6,            # reduced from 0.8 — more aggressive row sampling
+        colsample_bytree=0.5,     # reduced from 0.8 — more aggressive column sampling
+        reg_alpha=1.0,            # increased from 0.1 — stronger L1 regularization
+        reg_lambda=5.0,           # increased from 1.0 — stronger L2 regularization
         random_state=42,
         n_jobs=-1,
     )
-    model.fit(X, labels)
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        callbacks=[
+            __import__("lightgbm").early_stopping(stopping_rounds=30, verbose=True),
+        ],
+    )
 
     CONTENT_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONTENT_MODEL_PATH, "wb") as f:
@@ -74,7 +86,27 @@ def train_behavior_model(train_path: str = "data/synthetic/train.jsonl") -> None
         # Simulate a 5-min window from nearby entries (±20 entries same IP)
         window_sample = [entries[j] for j in range(max(0, i-20), min(len(entries), i+20))
                          if entries[j].get("ip") == e.get("ip")][:10]
-        rule_max = 0.8 if e.get("label", 0) > 0 else 0.1  # approximate for training
+
+        # Realistic rule_max simulation — must match inference distribution.
+        # During inference, many attacks don't trigger any rule (rule=0.0),
+        # some trigger partial matches (0.3-0.75), fewer trigger high-confidence (0.75-0.95).
+        # Normal traffic: mostly 0, occasionally low false positives.
+        if e.get("label", 0) > 0:
+            r = random.random()
+            if r < 0.40:
+                rule_max = 0.0          # 40% of attacks don't trigger any rule
+            elif r < 0.65:
+                rule_max = random.uniform(0.3, 0.5)   # 25% trigger partial
+            elif r < 0.85:
+                rule_max = random.uniform(0.5, 0.75)   # 20% trigger medium
+            else:
+                rule_max = random.uniform(0.75, 0.95)  # 15% trigger high
+        else:
+            r = random.random()
+            if r < 0.90:
+                rule_max = 0.0          # 90% of normals have no rule match
+            else:
+                rule_max = random.uniform(0.0, 0.3)    # 10% small false positive
 
         # Build a mock NormalizedLog for behavioral extraction
         from src.ingestion.schema import NormalizedLog
@@ -83,14 +115,19 @@ def train_behavior_model(train_path: str = "data/synthetic/train.jsonl") -> None
             timestamp=datetime.now(), source_ip=e.get("ip","0.0.0.0"),
             method=e.get("method","GET"), path=e.get("path","/"),
             status_code=e.get("status",200), source="apache",
-            query_string=e.get("query"), user_agent=e.get("user_agent"),
+            query_string=e.get("query"), content=e.get("content"),
+            user_agent=e.get("user_agent"),
         )
+
+        # Simulate rule_hits in window — count entries where rule would fire
+        rule_hits_sim = sum(1 for w in window_sample
+                           if w.get("label", 0) > 0 and random.random() > 0.4)
 
         beh = np.array([
             float(len(window_sample)),
             sum(1 for w in window_sample if w.get("status",200) >= 400) / max(len(window_sample),1),
             float(len({w.get("path") for w in window_sample})),
-            float(sum(1 for w in window_sample if w.get("label",0) > 0)),
+            float(rule_hits_sim),                       # realistic rule hits
             1.0 if e.get("status",200) >= 400 else 0.0,
             1.0 if e.get("method","GET") == "POST" else 0.0,
             0.5,  # hour normalized — use actual timestamp in production

@@ -7,7 +7,7 @@ class Rule:
     name: str
     score: float
     pattern: re.Pattern
-    field: str          # "path" | "query_string" | "user_agent" | "any"
+    field: str          # "path" | "query_string" | "content" | "user_agent" | "any"
     attack_type: str
     source: str         # "custom" | "crs"
 
@@ -102,6 +102,9 @@ _CUSTOM_RULES: list[Rule] = [
          "path", "path_traversal", "custom"),
     Rule("dir_scan", 0.50,
          re.compile(r'/(wp-admin|phpmyadmin|\.git|\.env|backup|config)(/|$)', re.I),
+         "path", "dir_scan", "custom"),
+    Rule("dir_scan_cfide_admin", 0.70,
+         re.compile(r'^/CFIDE/administrator(?:/|$)', re.I),
          "path", "dir_scan", "custom"),
     Rule("scanner_ua_dirbuster", 0.65,
          re.compile(r'DirBuster|Nikto|sqlmap|nmap|masscan|wpscan', re.I),

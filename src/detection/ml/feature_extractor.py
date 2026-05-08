@@ -12,6 +12,8 @@ def build_content_text(log: NormalizedLog) -> str:
     parts = [log.path or ""]
     if log.query_string:
         parts.append(log.query_string)
+    if log.content:
+        parts.append(log.content)
     if log.user_agent:
         parts.append(log.user_agent[:100])
     return " ".join(parts)

@@ -80,6 +80,7 @@ def load_labeled_data(
                         method=entry.get("method", "GET").upper(),
                         path=entry.get("path", "/"),
                         query_string=entry.get("query", ""),
+                        content=entry.get("content", ""),
                         status_code=int(entry.get("status", 200)),
                         response_size=int(entry.get("size", 0)),
                         user_agent=entry.get("user_agent", ""),
