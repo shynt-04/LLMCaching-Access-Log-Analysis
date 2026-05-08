@@ -120,13 +120,13 @@ def main():
         log = entry_to_log(e)
         
         # 1. Isolation Forest
-        # text = f"{log.path or ''} {log.query_string or ''} {log.user_agent[:100]}"
-        # if_pred = -1 if if_model.predict([text])[0] == -1 else 0  # IF returns -1 for anomaly, 1 for normal
-        # is_if_attack = if_pred == -1
-        # if is_if_attack and label == 1: if_tp += 1
-        # elif is_if_attack and label == 0: if_fp += 1
-        # elif not is_if_attack and label == 1: if_fn += 1
-        # else: if_tn += 1
+        text = f"{log.path or ''} {log.query_string or ''} {log.user_agent[:100]}"
+        if_pred = -1 if if_model.predict([text])[0] == -1 else 0  # IF returns -1 for anomaly, 1 for normal
+        is_if_attack = if_pred == -1
+        if is_if_attack and label == 1: if_tp += 1
+        elif is_if_attack and label == 0: if_fp += 1
+        elif not is_if_attack and label == 1: if_fn += 1
+        else: if_tn += 1
             
         # 2. Rule only
         r = rules.detect(log)
@@ -137,14 +137,14 @@ def main():
         else: r_tn += 1
             
         # 3. Content ML only
-        # X = vectorizer.transform([f"{log.path or ''} {log.query_string or ''} {log.user_agent[:100]}"])
-        # probs = content_model.predict_proba(X)[0]
-        # content_score = float(1.0 - probs[0])
-        # is_content_attack = content_score >= 0.5
-        # if is_content_attack and label == 1: c_tp += 1
-        # elif is_content_attack and label == 0: c_fp += 1
-        # elif not is_content_attack and label == 1: c_fn += 1
-        # else: c_tn += 1
+        X = vectorizer.transform([f"{log.path or ''} {log.query_string or ''} {log.user_agent[:100]}"])
+        probs = content_model.predict_proba(X)[0]
+        content_score = float(1.0 - probs[0])
+        is_content_attack = content_score >= 0.5
+        if is_content_attack and label == 1: c_tp += 1
+        elif is_content_attack and label == 0: c_fp += 1
+        elif not is_content_attack and label == 1: c_fn += 1
+        else: c_tn += 1
             
         # 4. Stage 1
         log.rule_score = r.max_score
@@ -159,77 +159,95 @@ def main():
         else: s1_tn += 1
 
         # 5. Stage 2 (Fast LLM Verification)
-        is_s2_attack = False
-        if is_s1_attack:
-            cache_key = f"{log.method}|{log.path}|{log.query_string}|{log.user_agent}"
-            if cache_key in llm_cache:
-                is_s2_attack = llm_cache[cache_key]
-            else:
-                request_text = f"{log.method} {log.path} {log.query_string} {log.user_agent}"
-                if len(request_text) > 1000:
-                    request_text = request_text[:1000] + "...[TRUNC]"
-                prompt = f"Is this web request an attack? Reply ONLY '1' for attack or '0' for normal.\nRequest: {request_text}"
+        # is_s2_attack = False
+        # if is_s1_attack:
+        #     cache_key = f"{log.method}|{log.path}|{log.query_string}|{log.user_agent}"
+        #     if cache_key in llm_cache:
+        #         is_s2_attack = llm_cache[cache_key]
+        #     else:
+        #         emb = None
+        #         cached_analysis = None
+        #         if semantic_cache:
+        #             try:
+        #                 cached_analysis, emb = semantic_cache.lookup(log)
+        #             except Exception as e:
+        #                 pass
                 
-                if llm_provider == "gemini" and gemini_model:
-                    try:
-                        # Add slight delay to avoid rate limit if using Gemini free tier
-                        time.sleep(0.5) 
-                        resp = gemini_model.generate_content(prompt)
-                        is_s2_attack = "1" in resp.text.strip()
-                    except Exception as e:
-                        # If API fails (e.g. rate limit), fallback to Stage 1 decision
-                        is_s2_attack = True 
-                elif llm_provider == "ollama":
-                    try:
-                        import requests
-                        payload = {
-                            "model": ollama_model_name,
-                            "prompt": prompt,
-                            "stream": False,
-                            "options": {
-                                "temperature": 0.0,
-                                "num_gpu": 99
-                            }
-                        }
-                        resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=120)
-                        if resp.status_code == 200:
-                            resp_text = resp.json().get("response", "").strip()
-                            if resp_text:
-                                is_s2_attack = "1" in resp_text
-                            else:
-                                is_s2_attack = True
-                        else:
-                            print(f"[Warn] Ollama returned status {resp.status_code}")
-                            is_s2_attack = True
-                        if lines < 10:
-                            print(f"[Debug] Line {lines}")
-                            print(f"Request: {log.method} {log.path} {log.query_string} {log.user_agent}")
-                            print(f"LLM response: {resp.json().get('response', '')}")
-                            print(f"Is attack: {is_s2_attack}")
-                            print(f"Label: {label}")
-                    except Exception as e:
-                        print(f"[Error] Ollama request failed: {e}")
-                        is_s2_attack = True
-                else:
-                    # Fallback to Stage 1 if no LLM configured
-                    is_s2_attack = True
+        #         if cached_analysis is not None:
+        #             is_s2_attack = cached_analysis.get("is_attack", True)
+        #             llm_cache[cache_key] = is_s2_attack
+        #         else:
+        #             request_text = f"{log.method} {log.path} {log.query_string} {log.user_agent}"
+        #             if len(request_text) > 1000:
+        #                 request_text = request_text[:1000] + "...[TRUNC]"
+        #             prompt = f"Is this web request an attack? Reply ONLY '1' for attack or '0' for normal.\nRequest: {request_text}"
                     
-                llm_cache[cache_key] = is_s2_attack
+        #             if llm_provider == "gemini" and gemini_model:
+        #                 try:
+        #                     # Add slight delay to avoid rate limit if using Gemini free tier
+        #                     time.sleep(0.5) 
+        #                     resp = gemini_model.generate_content(prompt)
+        #                     resp_text = resp.text.strip()
+        #                     if resp_text:
+        #                         is_s2_attack = "1" in resp_text
+        #                     else:
+        #                         is_s2_attack = True
+        #                 except Exception as e:
+        #                     # If API fails (e.g. rate limit), fallback to Stage 1 decision
+        #                     is_s2_attack = True 
+        #             elif llm_provider == "ollama":
+        #                 try:
+        #                     import requests
+        #                     payload = {
+        #                         "model": ollama_model_name,
+        #                         "prompt": prompt,
+        #                         "stream": False,
+        #                         "options": {
+        #                             "temperature": 0.0,
+        #                             "num_gpu": 99
+        #                         }
+        #                     }
+        #                     resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=120)
+        #                     if resp.status_code == 200:
+        #                         resp_text = resp.json().get("response", "").strip()
+        #                         if resp_text:
+        #                             is_s2_attack = "1" in resp_text
+        #                         else:
+        #                             is_s2_attack = True
+        #                     else:
+        #                         print(f"[Warn] Ollama returned status {resp.status_code}")
+        #                         is_s2_attack = True
+        #                     if lines < 10:
+        #                         print(f"[Debug] Line {lines}")
+        #                         print(f"Request: {log.method} {log.path} {log.query_string} {log.user_agent}")
+        #                         print(f"LLM response: {resp.json().get('response', '')}")
+        #                         print(f"Is attack: {is_s2_attack}")
+        #                         print(f"Label: {label}")
+        #                 except Exception as e:
+        #                     print(f"[Error] Ollama request failed: {e}")
+        #                     is_s2_attack = True
+        #             else:
+        #                 # Fallback to Stage 1 if no LLM configured
+        #                 is_s2_attack = True
+                        
+        #             llm_cache[cache_key] = is_s2_attack
+        #             if semantic_cache and emb is not None:
+        #                 semantic_cache.store(emb, {"is_attack": is_s2_attack})
                 
-            if is_s2_attack and label == 1: s2_tp += 1
-            elif is_s2_attack and label == 0: s2_fp += 1
-            elif not is_s2_attack and label == 1: s2_fn += 1
-            else: s2_tn += 1
-        else:
-            if label == 1: s2_fn += 1
-            else: s2_tn += 1
+        #     if is_s2_attack and label == 1: s2_tp += 1
+        #     elif is_s2_attack and label == 0: s2_fp += 1
+        #     elif not is_s2_attack and label == 1: s2_fn += 1
+        #     else: s2_tn += 1
+        # else:
+        #     if label == 1: s2_fn += 1
+        #     else: s2_tn += 1
 
     configs = [
-        # ("Baseline: Isolation Forest (unsupervised)", if_tp, if_fp, if_fn),
+        ("Baseline: Isolation Forest (unsupervised)", if_tp, if_fp, if_fn),
         ("Rule-only (CRS + custom CVE)", r_tp, r_fp, r_fn),
-        # ("Content ML-only (LightGBM, theta=0.50)", c_tp, c_fp, c_fn),
+        ("Content ML-only (LightGBM, theta=0.50)", c_tp, c_fp, c_fn),
         ("Three-stream merger, Stage 1 only (theta=0.50)", s1_tp, s1_fp, s1_fn),
-        ("Three-stream + LLM Verification (full system)", s2_tp, s2_fp, s2_fn),
+        # ("Three-stream + LLM Verification (full system)", s2_tp, s2_fp, s2_fn),
     ]
 
     print("\n" + "="*80)

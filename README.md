@@ -1,10 +1,10 @@
-# LLM-Augmented Web Log Analysis System
+# LLM-Augmented Web Access Log Analysis System
 
-## Tên đề tài (Project Title)
-**LLM-Augmented Web Log Analysis System** (Hệ thống phân tích log web tăng cường bằng LLM).
+## Project Title
+**LLM-Augmented Web Access Log Analysis System**
 
 ## Overview
-This project provides a high-performance, hybrid log detection pipeline designed to identify web attacks in access logs (e.g., Apache, Nginx). It leverages a multi-layer architecture combining rule-based heuristics, machine learning classification, and Large Language Models (LLMs) with a semantic caching mechanism to provide rapid and accurate threat detection, reducing both false positives and operational costs.
+This project provides a hybrid log detection pipeline designed to identify web attacks in access logs (e.g., Apache, Nginx). It leverages a multi-layer architecture combining rule-based heuristics, machine learning classification, and Large Language Models (LLMs) with a semantic caching mechanism to provide rapid and accurate threat detection, reducing both false positives and operational costs.
 
 ## Architecture
 The system employs a 3-layer detection pipeline:
@@ -15,16 +15,14 @@ The system employs a 3-layer detection pipeline:
 ## Features
 - **Multi-Provider LLM Integration**: Seamlessly switch between local, privacy-preserving inference (Ollama - `gemma4:e4b`) and fast, cloud-based APIs (Google Gemini).
 - **High-Performance Semantic Caching**: Uses FAISS and sentence transformers to cache LLM evaluations. This drastically reduces evaluation time for redundant log events.
-- **Real-Time Alert Dashboard**: A React-based web dashboard to monitor log analysis progress, visualize alerts via WebSockets, and manage detected threats.
-- **Analysis Lab**: A dedicated environment for researchers to benchmark performance, compare ML vs. LLM accuracy, and visualize latency and cache hit rate metrics.
-- **RESTful API & WebSockets**: Robust FastAPI backend for log ingestion, asynchronous background processing, and real-time streaming.
+- **Alert Dashboard**: A React-based web dashboard to monitor log analysis progress, visualize alerts via WebSockets, and manage detected threats.
+- **RESTful API & WebSockets**: Robust FastAPI backend for log ingestion, asynchronous background processing.
 
 ## Technology Stack
 - **Backend**: Python 3.10+, FastAPI, Uvicorn, Pydantic
 - **Machine Learning**: Scikit-Learn, LightGBM, Numpy, Scipy
 - **LLM & Embeddings**: Google Generative AI (Gemini), Ollama, FAISS (Semantic Search)
 - **Frontend**: React, Vite (communicating via WebSockets and REST APIs)
-- **Deployment**: Docker, Docker Compose
 
 ## Project Structure
 ```text
@@ -35,11 +33,10 @@ LLMCaching-Access-Log-Analysis/
 │   ├── detection/        # Rule-based and ML classification engines
 │   ├── llm/              # LLM integrations and FAISS Semantic Caching
 │   └── pipeline.py       # Main orchestrator linking all layers
-├── web/                  # React/Vite frontend Dashboard and Analysis Lab
+├── web/                  # React/Vite frontend Dashboard
 ├── data/                 # Datasets, synthetic logs, and pre-trained models
 ├── benchmark/            # Benchmarking and performance testing scripts
 ├── eval/                 # Evaluation and pipeline validation scripts
-├── scripts/              # Utility scripts for data generation and training
 ├── docker-compose.yml    # Docker services configuration
 ├── requirements.txt      # Python dependencies
 └── .env                  # Environment variables configuration
@@ -54,7 +51,7 @@ Create a `.env` file in the root directory with the following configurations (ad
 LLM_PROVIDER="gemini"
 
 # === LLM API KEYS ===
-GEMINI_API_KEY="your_google_gemini_api_key_here"
+GEMINI_API_KEY="add_key_here"
 
 # === LOCAL OLLAMA CONFIG ===
 OLLAMA_HOST="http://localhost:11434" # Use http://host.docker.internal:11434 inside Docker
@@ -63,15 +60,6 @@ OLLAMA_EMBED_MODEL="all-minilm"
 ```
 
 ## Deployment
-
-### Using Docker Compose (Recommended)
-1. Ensure Docker and Docker Compose are installed on your machine.
-2. Configure your `.env` file properly.
-3. Start the services using Docker Compose:
-   ```bash
-   docker-compose up --build -d
-   ```
-4. Access the backend API at `http://localhost:8000` and the frontend dashboard at `http://localhost:3000`.
 
 ### Local Development (Manual Setup)
 **Backend:**
