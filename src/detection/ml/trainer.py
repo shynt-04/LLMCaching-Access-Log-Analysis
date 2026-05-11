@@ -157,3 +157,16 @@ def train_behavior_model(train_path: str = "data/synthetic/train.jsonl") -> None
     with open(BEHAVIOR_MODEL_PATH, "wb") as f:
         pickle.dump({"model": model, "scaler": scaler}, f)
     print(f"Behavior model saved — {X.shape[0]} samples")
+
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("  Training LightGBM Models")
+    print("=" * 60)
+    print("\n[1/2] Training content model (TF-IDF + LightGBM)...")
+    train_content_model()
+    print("\n[2/2] Training behavior model (LightGBM)...")
+    train_behavior_model()
+    print("\n" + "=" * 60)
+    print("  Training complete! Models saved to data/models/")
+    print("=" * 60)

@@ -163,17 +163,15 @@ async def _process_lines(
             # Stream alert to all connected clients
             await broadcast(session_id, {"type": "alert", "data": alert_data})
 
-        # Update progress every 10 lines or on last line
-        if (i + 1) % 10 == 0 or i == len(lines) - 1:
-            sessions[session_id]["progress"] = i + 1
-            await broadcast(session_id, {
-                "type": "progress",
-                "data": {"processed": i + 1, "total": len(lines)},
-            })
+        # Update progress after every line
+        sessions[session_id]["progress"] = i + 1
+        await broadcast(session_id, {
+            "type": "progress",
+            "data": {"processed": i + 1, "total": len(lines)},
+        })
 
         # Yield control to event loop to allow WS sends
-        if i % 5 == 0:
-            await asyncio.sleep(0)
+        await asyncio.sleep(0)
 
     # Compute final metrics
     sorted_lat = sorted(latencies)

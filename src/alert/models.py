@@ -39,6 +39,7 @@ class Alert:
             "source_ip": self.log.source_ip,
             "method": self.log.method,
             "path": self.log.path,
+            "query_string": self.log.query_string,
             "status_code": self.log.status_code,
             "merged_score": round(self.merged_score, 4),
             "rule_score": round(self.rule_score, 4),

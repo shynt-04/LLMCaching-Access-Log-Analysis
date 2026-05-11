@@ -19,6 +19,7 @@ _OPTIONS = {
     "num_ctx":     OLLAMA_NUM_CTX,
     "num_predict": OLLAMA_NUM_PREDICT,
     "temperature": OLLAMA_TEMPERATURE,
+    "num_gpu": 99
 }
 
 
@@ -38,12 +39,8 @@ class LLMClient:
         if not api_key:
             raise ValueError("GEMINI_API_KEY must be set when LLM_PROVIDER=gemini")
         import google.genai as genai
-        genai.configure(api_key=api_key)
-        model_name = os.environ.get("GEMINI_MODEL", GEMINI_MODEL)
-        self._gemini_model = genai.GenerativeModel(
-            model_name,
-            generation_config={"response_mime_type": "application/json"},
-        )
+        self._gemini_client = genai.Client(api_key=api_key)
+        self._gemini_model_name = os.environ.get("GEMINI_MODEL", GEMINI_MODEL)
 
     # ── Ollama setup ──────────────────────────────────────────────────
     def _init_ollama(self) -> None:
@@ -77,11 +74,16 @@ class LLMClient:
     # ── Gemini inference ──────────────────────────────────────────────
     def _analyze_gemini(self, user_content: str) -> dict:
         """Call Gemini API — returns structured JSON with token counts."""
+        from google.genai import types
         t_start = time.perf_counter()
         try:
-            # Prepend system prompt as user context (Gemini simple mode)
-            response = self._gemini_model.generate_content(
-                _PROMPT + "\n\n" + user_content
+            response = self._gemini_client.models.generate_content(
+                model=self._gemini_model_name,
+                contents=_PROMPT + "\n\n" + user_content,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
             )
             ttft_ms = (time.perf_counter() - t_start) * 1000
 

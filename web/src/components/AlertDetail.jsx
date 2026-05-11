@@ -90,9 +90,15 @@ export default function AlertDetail({ alert }) {
       {/* Payload */}
       {alert.path && (
         <div className="detail-section">
-          <div className="detail-section-title">Request Path (decoded)</div>
+          <div className="detail-section-title">Request (decoded)</div>
           <div className="detail-payload">
-            {alert.method} {alert.path}
+            <div>{alert.method} {alert.path}{alert.query_string ? `?${alert.query_string}` : ''}</div>
+            {alert.query_string && (
+              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', display: 'block', marginBottom: '4px' }}>Query String</span>
+                <span style={{ wordBreak: 'break-all' }}>{alert.query_string}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -147,7 +153,7 @@ export default function AlertDetail({ alert }) {
         </div>
       )}
 
-      {/* Latency info */}
+      {/* Latency info — hidden for SIEM-like presentation
       {alert.latency_ms !== undefined && (
         <div className="detail-section">
           <div className="detail-section-title">Performance</div>
@@ -165,6 +171,7 @@ export default function AlertDetail({ alert }) {
           </div>
         </div>
       )}
+      */}
     </div>
   )
 }
