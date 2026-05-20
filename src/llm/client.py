@@ -19,7 +19,7 @@ _OPTIONS = {
     "num_ctx":     OLLAMA_NUM_CTX,
     "num_predict": OLLAMA_NUM_PREDICT,
     "temperature": OLLAMA_TEMPERATURE,
-    "num_gpu": 99
+    "num_gpu": 40
 }
 
 

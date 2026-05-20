@@ -1,6 +1,10 @@
 import pickle
 import numpy as np
+import warnings
 from scipy.sparse import hstack
+
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+
 from src.ingestion.schema import NormalizedLog
 from src.detection.ml.feature_extractor import build_content_text, extract_behavioral
 

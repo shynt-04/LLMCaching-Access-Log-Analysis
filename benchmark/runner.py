@@ -1,5 +1,9 @@
-import time, json
+import time, json, sys
 from pathlib import Path
+
+# Add the project root to sys.path so we can import from src and benchmark
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from src.pipeline import Pipeline
 from benchmark.metrics import BenchmarkMetrics
 from benchmark.gpu_sampler import sample_gpu_util
@@ -19,7 +23,13 @@ def run(log_path: str, use_cache: bool, output_path: str) -> dict:
     lines = Path(log_path).read_text().splitlines()
     wall_start = time.perf_counter()
 
+    cur = 0
+
     for line in lines:
+        if cur % 10 == 0:
+            print(f"Processed {cur}/{len(lines)} lines")
+        cur += 1
+
         t0 = time.perf_counter()
 
         # Sample GPU util concurrently with the LLM call
@@ -47,7 +57,10 @@ def run(log_path: str, use_cache: bool, output_path: str) -> dict:
             m.record_llm_call(
                 alert.input_tokens, alert.output_tokens,
                 alert.ttft_ms or 0.0, gpu_util, alert.cache_hit,
+                latency_ms=latency,
             )
+        else:
+            m.record_non_alert_event(latency)
 
     m.elapsed_wall_s = time.perf_counter() - wall_start
     summary = m.summary()
@@ -58,9 +71,17 @@ def run(log_path: str, use_cache: bool, output_path: str) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", required=True, help="Path to log file")
-    parser.add_argument("--out", required=True, help="Output JSON path")
-    parser.add_argument("--cache", action="store_true", help="Enable cache")
     args = parser.parse_args()
-    print(f"Running benchmark on {args.log} (cache={args.cache})")
-    run(args.log, args.cache, args.out)
-    print(f"Results saved to {args.out}")
+    log_path = args.log
+
+    use_cache = True
+    output_path = "benchmark/output_cache_true.json"
+    print(f"Running benchmark on {log_path} (cache={use_cache})")
+    run(log_path, use_cache, output_path)
+    print(f"Results saved to {output_path}")
+
+    use_cache = False
+    output_path = "benchmark/output_cache_false.json"
+    print(f"Running benchmark on {log_path} (cache={use_cache})")
+    run(log_path, use_cache, output_path)
+    print(f"Results saved to {output_path}")
