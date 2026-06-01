@@ -86,13 +86,24 @@ def main():
     print("  CSIC 2010 Distribution Analysis")
     print("=" * 60)
 
-    # Read CSV
-    with open(csv_path, "r", encoding="utf-8", errors="replace") as f:
+    # Read CSV — detect label column (may be unnamed or have BOM prefix)
+    with open(csv_path, "r", encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
+        label_col = None
+        for col in reader.fieldnames or []:
+            stripped = col.lstrip("\ufeff").strip()
+            if stripped == "" or stripped.lower() in ("label", "class", "classification"):
+                label_col = col
+                break
         rows = list(reader)
 
-    normal = [r for r in rows if r.get("", "").strip() == "Normal"]
-    anomalous = [r for r in rows if r.get("", "").strip() == "Anomalous"]
+    if label_col is None:
+        print(f"WARNING: No label column found in CSV headers: {reader.fieldnames}")
+        print("Falling back to first column.")
+        label_col = (reader.fieldnames or [""])[0]
+
+    normal = [r for r in rows if r.get(label_col, "").strip() == "Normal"]
+    anomalous = [r for r in rows if r.get(label_col, "").strip() == "Anomalous"]
 
     print(f"\nTotal entries: {len(rows)}")
     print(f"  Normal:    {len(normal)}")

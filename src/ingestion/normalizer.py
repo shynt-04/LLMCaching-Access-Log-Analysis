@@ -4,7 +4,6 @@ from typing import Optional
 from src.ingestion.schema import NormalizedLog
 from src.ingestion.parsers.nginx_parser import NginxParser
 from src.ingestion.parsers.apache_parser import ApacheParser
-from src.ingestion.parsers.iis_parser import IISParser
 from src.ingestion.parsers.base import BaseParser
 
 
@@ -13,7 +12,6 @@ class Normalizer:
         self._parsers: dict[str, BaseParser] = {
             "nginx": NginxParser(),
             "apache": ApacheParser(),
-            "iis": IISParser(),
         }
 
     def detect_source(self, sample_lines: list[str]) -> str:
@@ -21,7 +19,6 @@ class Normalizer:
         Auto-detect log source from content.
 
         Heuristics:
-        - IIS: lines start with # (comment/fields header)
         - Nginx/Apache: uses Combined Log Format, distinguished by
           minor format differences or by full parsing
         """
@@ -29,12 +26,6 @@ class Normalizer:
             line = line.strip()
             if not line:
                 continue
-
-            if line.startswith("#"):
-                return "iis"
-
-            if len(line) > 10 and line[4] == "-" and line[7] == "-":
-                return "iis"
 
             if line.rstrip().endswith('"-"'):
                 return "nginx"

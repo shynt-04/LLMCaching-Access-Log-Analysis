@@ -8,7 +8,6 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function App() {
   const [alerts, setAlerts] = useState([])
-  const [sessions, setSessions] = useState({})
   const [activeSession, setActiveSession] = useState(null)
   const [progress, setProgress] = useState(null)
   const [metrics, setMetrics] = useState(null)
@@ -106,7 +105,13 @@ function App() {
       <Routes>
         <Route
           path="/"
-          element={<AlertDashboard alerts={alerts} />}
+          element={
+            <AlertDashboard
+              alerts={alerts}
+              activeSession={activeSession}
+              apiUrl={API_URL}
+            />
+          }
         />
         <Route
           path="/lab"

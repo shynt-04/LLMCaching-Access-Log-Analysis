@@ -1,7 +1,6 @@
 """
 python main.py                                    
 python main.py data/raw/sample_apache.log apache 
-python main.py data/raw/sample_iis.log iis       
 """
 
 import sys

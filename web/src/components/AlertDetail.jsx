@@ -30,7 +30,7 @@ export default function AlertDetail({ alert }) {
             {severity}
           </span>
           <span className={`cache-badge ${alert.cache_hit ? 'hit' : 'miss'}`}>
-            {alert.cache_hit ? '⚡ Cache Hit' : '🔄 LLM Call'}
+            {alert.cache_hit ? 'Cache Hit' : 'LLM Call'}
           </span>
         </div>
       </div>
@@ -103,6 +103,16 @@ export default function AlertDetail({ alert }) {
         </div>
       )}
 
+      {/* Original Log Line */}
+      {alert.raw_line && (
+        <div className="detail-section">
+          <div className="detail-section-title">Original Log Line</div>
+          <div className="detail-payload" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {alert.raw_line}
+          </div>
+        </div>
+      )}
+
       {/* Matched rules */}
       {alert.matched_rules?.length > 0 && (
         <div className="detail-section">
@@ -122,10 +132,10 @@ export default function AlertDetail({ alert }) {
           <div className="detail-actions">
             {analysis.recommended_actions.map((action, i) => (
               <span key={i} className="action-tag">
-                {action === 'block_ip' ? `🚫 Block ${alert.source_ip}` :
-                 action === 'escalate' ? '⬆️ Escalate' :
-                 action === 'monitor' ? '👁️ Monitor' :
-                 action === 'ignore' ? '✓ Ignore' : action}
+                {action === 'block_ip' ? `Block ${alert.source_ip}` :
+                 action === 'escalate' ? 'Escalate' :
+                 action === 'monitor' ? 'Monitor' :
+                 action === 'ignore' ? 'Ignore' : action}
               </span>
             ))}
           </div>
@@ -146,7 +156,7 @@ export default function AlertDetail({ alert }) {
                 rel="noopener noreferrer"
                 style={{ textDecoration: 'none' }}
               >
-                🔗 {cve}
+                {cve}
               </a>
             ))}
           </div>

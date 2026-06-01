@@ -13,7 +13,6 @@ from datetime import datetime, timezone, timedelta
 from src.ingestion.schema import NormalizedLog
 from src.ingestion.parsers.nginx_parser import NginxParser
 from src.ingestion.parsers.apache_parser import ApacheParser
-from src.ingestion.parsers.iis_parser import IISParser
 from src.ingestion.normalizer import Normalizer
 
 
@@ -253,91 +252,6 @@ class TestApacheParser:
         assert result is not None
         assert result.response_size == 0
 
-
-# ═══════════════════════════════════════════════════════════════════
-#  IIS Parser Tests
-# ═══════════════════════════════════════════════════════════════════
-
-class TestIISParser:
-    """Tests for IISParser."""
-
-    @pytest.fixture
-    def parser(self):
-        return IISParser()
-
-    def test_parse_with_fields_header(self, parser):
-        """Parse with #Fields header then data line."""
-        fields_line = "#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken"
-        parser.parse(fields_line)  # Should update fields
-
-        data_line = "2024-03-13 14:23:45 192.168.1.1 GET /default.aspx - 80 - 10.0.0.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 125"
-        result = parser.parse(data_line)
-
-        assert result is not None
-        assert result.source_ip == "10.0.0.50"
-        assert result.method == "GET"
-        assert result.path == "/default.aspx"
-        assert result.status_code == 200
-        assert result.source == "iis"
-
-    def test_skip_comment_lines(self, parser):
-        """Lines starting with # return None."""
-        assert parser.parse("#Software: Microsoft Internet Information Services 10.0") is None
-        assert parser.parse("#Version: 1.0") is None
-        assert parser.parse("#Date: 2024-03-13 00:00:00") is None
-
-    def test_parse_with_query(self, parser):
-        """Parse IIS data line with query string."""
-        fields_line = "#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken"
-        parser.parse(fields_line)
-
-        data_line = "2024-03-13 14:25:00 192.168.1.1 GET /products/list ProductID=100&page=1 80 admin 10.0.0.51 Mozilla/5.0+(Windows+NT+10.0) https://www.example.com 200 0 0 300"
-        result = parser.parse(data_line)
-
-        assert result is not None
-        assert result.query_string == "ProductID=100&page=1"
-
-    def test_timestamp_utc(self, parser):
-        """IIS timestamp must be UTC."""
-        fields_line = "#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken"
-        parser.parse(fields_line)
-
-        data_line = "2024-03-13 14:23:45 192.168.1.1 GET /default.aspx - 80 - 10.0.0.50 Mozilla/5.0 - 200 0 0 125"
-        result = parser.parse(data_line)
-
-        assert result is not None
-        assert result.timestamp.tzinfo == timezone.utc
-
-    def test_user_agent_decode(self, parser):
-        """User agent must decode + to space."""
-        fields_line = "#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken"
-        parser.parse(fields_line)
-
-        data_line = "2024-03-13 14:23:45 192.168.1.1 GET /page - 80 - 10.0.0.50 Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64) - 200 0 0 125"
-        result = parser.parse(data_line)
-
-        assert result is not None
-        assert "+" not in result.user_agent
-        assert "Windows NT 10.0" in result.user_agent
-
-    def test_malformed_returns_none(self, parser):
-        """Malformed data line returns None."""
-        fields_line = "#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken"
-        parser.parse(fields_line)
-        assert parser.parse("only two fields") is None
-
-    def test_query_dash_is_none(self, parser):
-        """Query string '-' must become None."""
-        fields_line = "#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken"
-        parser.parse(fields_line)
-
-        data_line = "2024-03-13 14:23:45 192.168.1.1 GET /page - 80 - 10.0.0.50 Mozilla/5.0 - 200 0 0 125"
-        result = parser.parse(data_line)
-
-        assert result is not None
-        assert result.query_string is None
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  Normalizer Tests
 # ═══════════════════════════════════════════════════════════════════
@@ -363,13 +277,6 @@ class TestNormalizer:
         ]
         assert normalizer.detect_source(lines) == "apache"
 
-    def test_detect_iis(self, normalizer):
-        """Auto-detect IIS format."""
-        lines = [
-            "#Software: Microsoft Internet Information Services 10.0",
-            "#Fields: date time s-ip cs-method ...",
-        ]
-        assert normalizer.detect_source(lines) == "iis"
 
     def test_parse_line_nginx(self, normalizer):
         """Parse single line with specific source."""
@@ -409,21 +316,6 @@ class TestNormalizer:
         for r in results:
             assert isinstance(r, NormalizedLog)
             assert r.source == "apache"
-
-    def test_parse_file_sample_iis(self, normalizer):
-        """Parse sample_iis.log file."""
-        filepath = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "raw", "sample_iis.log"
-        )
-        if not os.path.isfile(filepath):
-            pytest.skip("sample_iis.log not found")
-
-        results = normalizer.parse_file(filepath, source="iis")
-        assert len(results) > 0
-        for r in results:
-            assert isinstance(r, NormalizedLog)
-            assert r.source == "iis"
 
     def test_parse_file_max_lines(self, normalizer):
         """parse_file respects max_lines parameter."""
@@ -499,19 +391,3 @@ class TestParseRate:
 
         rate = len(results) / total_lines if total_lines > 0 else 0
         assert rate >= 0.95, f"Apache parse rate {rate:.1%} < 95%"
-
-    def test_iis_parse_rate(self):
-        """IIS parser must parse >= 95% data lines in sample."""
-        filepath = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "raw", "sample_iis.log"
-        )
-        if not os.path.isfile(filepath):
-            pytest.skip("sample_iis.log not found")
-
-        normalizer = Normalizer()
-        results = normalizer.parse_file(filepath, source="iis")
-        total_lines = self._get_line_count(filepath)
-
-        rate = len(results) / total_lines if total_lines > 0 else 0
-        assert rate >= 0.95, f"IIS parse rate {rate:.1%} < 95%"

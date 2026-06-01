@@ -256,7 +256,7 @@ def main():
         ("Rule-only (CRS + custom CVE)", r_tp, r_fp, r_fn),
         ("Content ML-only (LightGBM, theta=0.50)", c_tp, c_fp, c_fn),
         ("Three-stream merger, Stage 1 only (theta=0.50)", s1_tp, s1_fp, s1_fn),
-        ("Three-stream + LLM Verification (full system)", s2_tp, s2_fp, s2_fn),
+        # ("Three-stream + LLM Verification (full system)", s2_tp, s2_fp, s2_fn),
     ]
 
     print("\n" + "="*80)
@@ -268,6 +268,23 @@ def main():
         f = f1_score(p, r)
         print(f"{name:<50} | {p:.3f}     | {r:.3f}     | {f:.3f}")
     print("="*80)
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    # In ra confusion matrix cho tung cau hinh
+    for name, tp, fp, fn in configs:
+        tn = total_attacks - tp - fp - fn  # Calculate TN based on total attacks
+        cm = np.array([[tp, fp], [fn, tn]])
+        plt.figure(figsize=(4, 3))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False)
+        plt.title(f"Confusion Matrix: {name}")
+        plt.xlabel("Predicted")
+        plt.ylabel("Actual")
+        plt.xticks([0.5, 1.5], ["Attack", "Normal"])
+        plt.yticks([0.5, 1.5], ["Attack", "Normal"])
+        plt.tight_layout()
+        plt.show()
 
 if __name__ == "__main__":
     main()

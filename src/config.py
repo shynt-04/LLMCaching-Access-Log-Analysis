@@ -1,9 +1,11 @@
+import os
 # src/config.py
 # All tunable constants — import from here, never hardcode in modules
 
 ALERT_THRESHOLD    = 0.5
 WINDOW_MINUTES     = 5
 CACHE_SIMILARITY   = 0.85
+CACHE_MAX_SIZE     = 2048
 CONTENT_WEIGHT     = 0.5   # weight for TF-IDF+LightGBM content score
 BEHAVIOR_WEIGHT    = 0.3   # weight for behavioral score
 RULE_WEIGHT        = 0.2   # weight for rule-based score
@@ -17,10 +19,13 @@ OLLAMA_EMBED_MODEL = "all-minilm"             # embedding model for semantic cac
 OLLAMA_NUM_CTX     = 4096
 OLLAMA_NUM_PREDICT = 2048
 OLLAMA_TEMPERATURE = 0.1
+OLLAMA_NUM_GPU     = int(os.environ.get("OLLAMA_NUM_GPU", "1"))
 
 # Gemini API settings (cloud alternative to Ollama)
 GEMINI_MODEL       = "gemini-3-flash-preview"
 
+# Anthropic Claude API settings (cloud alternative — Haiku is the fastest)
+CLAUDE_MODEL       = "claude-haiku-4-5-20251001"
 
 # Synthetic data generation
 SYNTH_BATCH_SIZE   = 100   # logs per LLM call

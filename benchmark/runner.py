@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.pipeline import Pipeline
 from benchmark.metrics import BenchmarkMetrics
-from benchmark.gpu_sampler import sample_gpu_util
+from benchmark.gpu_sampler import sample_gpu_util, _HAS_GPU
 import threading
 import argparse
 
@@ -32,23 +32,26 @@ def run(log_path: str, use_cache: bool, output_path: str) -> dict:
 
         t0 = time.perf_counter()
 
-        # Sample GPU util concurrently with the LLM call
         gpu_util = 0.0
         alert = None
 
-        def _run():
-            nonlocal alert
-            alert = pipeline.process_line(line)
+        if _HAS_GPU:
+            # Sample GPU util concurrently with the LLM call
+            def _run():
+                nonlocal alert
+                alert = pipeline.process_line(line)
 
-        t = threading.Thread(target=_run)
-        t.start()
-        # Poll GPU while the call runs
-        import time as _t
-        samples = []
-        while t.is_alive():
-            samples.append(sample_gpu_util(0.05))
-        t.join()
-        gpu_util = sum(samples) / len(samples) if samples else 0.0
+            t = threading.Thread(target=_run)
+            t.start()
+            # Poll GPU while the call runs
+            samples = []
+            while t.is_alive():
+                samples.append(sample_gpu_util(0.05))
+            t.join()
+            gpu_util = sum(samples) / len(samples) if samples else 0.0
+        else:
+            # No GPU — run pipeline directly without threading overhead
+            alert = pipeline.process_line(line)
 
         latency = (time.perf_counter() - t0) * 1000
         m.record_event(latency)

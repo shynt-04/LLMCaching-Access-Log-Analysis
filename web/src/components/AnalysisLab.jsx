@@ -4,14 +4,12 @@ export default function AnalysisLab({
   onStartAnalysis,
   progress,
   metrics,
-  activeSession,
   alerts,
 }) {
   const [file, setFile] = useState(null)
   const [source, setSource] = useState('auto')
   const [useCache, setUseCache] = useState(true)
   const [isRunning, setIsRunning] = useState(false)
-  const [history, setHistory] = useState([])  // store past session metrics
   const fileRef = useRef(null)
 
   const handleSubmit = async (e) => {
@@ -26,7 +24,7 @@ export default function AnalysisLab({
     setIsRunning(false)
   }
 
-  // Gather all metrics (current + history) for comparison table
+  // Gather all completed run metrics for comparison table
   const allMetrics = metrics ? Object.entries(metrics) : []
 
   // Separate no-cache and with-cache runs for side-by-side comparison
@@ -133,7 +131,7 @@ export default function AnalysisLab({
                   color: 'var(--text-secondary)',
                   marginBottom: '12px',
                 }}>
-                  Session {sid} — {m.use_cache ? '✅ With Cache' : '❌ No Cache'}
+                  Session {sid} — {m.use_cache ? 'With Cache' : 'No Cache'}
                 </h3>
                 <table className="benchmark-table">
                   <thead>
@@ -201,7 +199,7 @@ export default function AnalysisLab({
                   marginBottom: '12px',
                   marginTop: '24px',
                 }}>
-                  ⚡ Comparison: No Cache vs With Cache
+                  Comparison: No Cache vs With Cache
                 </h3>
                 <table className="benchmark-table">
                   <thead>

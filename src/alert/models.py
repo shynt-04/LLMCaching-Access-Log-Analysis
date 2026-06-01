@@ -41,6 +41,8 @@ class Alert:
             "path": self.log.path,
             "query_string": self.log.query_string,
             "status_code": self.log.status_code,
+            "user_agent": self.log.user_agent,
+            "raw_line": self.log.raw_line,
             "merged_score": round(self.merged_score, 4),
             "rule_score": round(self.rule_score, 4),
             "ml_score": round(self.ml_score, 4),

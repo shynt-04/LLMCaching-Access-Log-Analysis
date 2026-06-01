@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, unquote
 import numpy as np
 import ollama as _ollama
 
-from src.config import CACHE_SIMILARITY, OLLAMA_EMBED_MODEL, OLLAMA_HOST
+from src.config import CACHE_SIMILARITY, CACHE_MAX_SIZE, OLLAMA_EMBED_MODEL, OLLAMA_HOST
 from src.ingestion.schema import NormalizedLog
 
 
@@ -34,6 +34,7 @@ class SemanticCache:
         self._entries: list[CacheEntry] = []
         self._exact: dict[str, dict] = {}
         self._embedding_matrix: np.ndarray | None = None
+        self._max_size = CACHE_MAX_SIZE
         self._last_key: str | None = None
         self._lookups = 0
         self._hits = 0
@@ -127,7 +128,7 @@ class SemanticCache:
 
     def _embed(self, key: str) -> np.ndarray:
         """Create normalized embedding from canonical request text."""
-        response = self._client.embed(model=self._embed_model, input=key[:300])
+        response = self._client.embed(model=self._embed_model, input=key[:512])
         vec = np.array(response.embeddings[0], dtype=np.float32)
         norm = np.linalg.norm(vec)
         if norm > 0:
@@ -171,6 +172,13 @@ class SemanticCache:
             self._exact[self._last_key] = analysis.copy()
         if emb is None:
             return
+
+        # Evict oldest entry if at capacity (FIFO eviction)
+        if len(self._entries) >= self._max_size:
+            self._entries.pop(0)
+            self._embedding_matrix = np.vstack(
+                [e.embedding.reshape(1, -1) for e in self._entries]
+            ) if self._entries else None
 
         self._entries.append(CacheEntry(emb, analysis.copy(), datetime.now()))
         row = emb.reshape(1, -1)

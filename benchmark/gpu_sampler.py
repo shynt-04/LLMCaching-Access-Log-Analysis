@@ -1,12 +1,24 @@
-import threading
 import time
-from typing import Callable
+
+# Module-level GPU availability check — done once at import
+_HAS_GPU = False
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    pynvml.nvmlDeviceGetHandleByIndex(0)
+    _HAS_GPU = True
+    pynvml.nvmlShutdown()
+except Exception:
+    pass
+
 
 def sample_gpu_util(duration_s: float) -> float:
     """Sample average GPU utilization over a call duration.
 
     Uses pynvml (NVIDIA) or falls back to 0.0 if unavailable (CPU-only machine).
     """
+    if not _HAS_GPU:
+        return 0.0
     try:
         import pynvml
         pynvml.nvmlInit()
@@ -18,5 +30,4 @@ def sample_gpu_util(duration_s: float) -> float:
             time.sleep(0.05)
         return sum(samples) / len(samples) if samples else 0.0
     except Exception:
-        # pynvml unavailable (no NVIDIA GPU or not installed) — return 0
         return 0.0

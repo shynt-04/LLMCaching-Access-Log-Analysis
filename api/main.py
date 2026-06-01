@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
-from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -93,7 +93,7 @@ async def analyze_log(
     use_cache: bool = Form(True),
 ):
     """Accept a log file upload and start background processing."""
-    session_id = str(uuid.uuid4())[:8]
+    session_id = str(uuid.uuid4())
     content = (await file.read()).decode("utf-8", errors="replace")
     lines = [l for l in content.splitlines() if l.strip()]
 
@@ -136,11 +136,13 @@ async def _process_lines(
     cache_hits = 0
     total_alerts = 0
 
+    progress_interval = max(1, len(lines) // 100)
+
     for i, line in enumerate(lines):
         t0 = time.perf_counter()
 
         try:
-            alert = pipeline.process_line(line, source=source)
+            alert = await asyncio.to_thread(pipeline.process_line, line, source=source)
         except Exception as e:
             print(f"[Pipeline] Error on line {i}: {e}")
             alert = None
@@ -163,12 +165,13 @@ async def _process_lines(
             # Stream alert to all connected clients
             await broadcast(session_id, {"type": "alert", "data": alert_data})
 
-        # Update progress after every line
+        # Throttle progress broadcasts to ~1% intervals
         sessions[session_id]["progress"] = i + 1
-        await broadcast(session_id, {
-            "type": "progress",
-            "data": {"processed": i + 1, "total": len(lines)},
-        })
+        if (i + 1) % progress_interval == 0 or i == len(lines) - 1:
+            await broadcast(session_id, {
+                "type": "progress",
+                "data": {"processed": i + 1, "total": len(lines)},
+            })
 
         # Yield control to event loop to allow WS sends
         await asyncio.sleep(0)
@@ -230,6 +233,105 @@ async def get_alerts(session_id: str):
     if session_id not in sessions:
         return {"error": "Session not found"}
     return sessions[session_id]["alerts"]
+
+
+# ── Filter/Search API ────────────────────────────────────────────────
+def _get_severity(score: float) -> str:
+    """Classify merged_score into severity level."""
+    if score >= 0.85:
+        return "critical"
+    if score >= 0.70:
+        return "high"
+    if score >= 0.50:
+        return "medium"
+    return "low"
+
+
+@app.get("/api/alerts/{session_id}/search")
+async def search_alerts(
+    session_id: str,
+    severity: Optional[list[str]] = Query(None),
+    attack_type: Optional[list[str]] = Query(None),
+    ip: Optional[str] = None,
+    search: Optional[str] = None,
+    sort_by: str = "line_number",
+    sort_order: str = "desc",
+    page: int = 1,
+    page_size: int = 50,
+):
+    """Server-side filter, search, sort, and paginate alerts for a session."""
+    if session_id not in sessions:
+        return {"error": "Session not found"}
+
+    all_alerts = sessions[session_id]["alerts"]
+    filtered = []
+
+    for alert in all_alerts:
+        # Severity filter
+        if severity:
+            if _get_severity(alert.get("merged_score", 0)) not in severity:
+                continue
+
+        # Attack type filter
+        if attack_type:
+            a_type = (alert.get("analysis") or {}).get("attack_type", "unknown")
+            if a_type not in attack_type:
+                continue
+
+        # IP substring filter
+        if ip:
+            if ip.lower() not in (alert.get("source_ip") or "").lower():
+                continue
+
+        # Full-text search across alert fields, including the original line for alerted events.
+        if search:
+            q = search.lower()
+            haystack = " ".join(
+                str(v) for v in [
+                    alert.get("line_number"),
+                    alert.get("source_ip"),
+                    alert.get("method"),
+                    alert.get("path"),
+                    alert.get("query_string"),
+                    alert.get("status_code"),
+                    alert.get("user_agent"),
+                    alert.get("raw_line"),
+                    alert.get("matched_rules"),
+                    alert.get("attack_types"),
+                    (alert.get("analysis") or {}).get("attack_type"),
+                    (alert.get("analysis") or {}).get("explanation"),
+                    (alert.get("analysis") or {}).get("cve_refs"),
+                ] if v
+            ).lower()
+            if q not in haystack:
+                continue
+
+        filtered.append(alert)
+
+    # Sorting
+    reverse = sort_order == "desc"
+    if sort_by == "merged_score":
+        filtered.sort(key=lambda a: a.get("merged_score", 0), reverse=reverse)
+    elif sort_by == "timestamp":
+        filtered.sort(key=lambda a: a.get("timestamp", ""), reverse=reverse)
+    else:  # line_number (default)
+        filtered.sort(key=lambda a: a.get("line_number", 0), reverse=reverse)
+
+    # Pagination
+    total = len(filtered)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    return {
+        "alerts": filtered[start:end],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    }
 
 
 @app.get("/api/health")

@@ -1,15 +1,16 @@
 # src/llm/client.py
-"""Multi-provider LLM client — supports Ollama (local) and Gemini API (cloud).
+"""Multi-provider LLM client — supports Ollama (local), Gemini API, and Claude API.
 
 Provider selection via LLM_PROVIDER env var:
   - "ollama" (default): local inference, $0 cost, higher latency
-  - "gemini": cloud API, fast TTFT, requires GEMINI_API_KEY
+  - "gemini": Google cloud API, fast TTFT, requires GEMINI_API_KEY
+  - "claude": Anthropic cloud API (Haiku — fastest), requires CLAUDE_API_KEY
 """
 import os, json, time
 from pathlib import Path
 from src.config import (
     OLLAMA_MODEL, OLLAMA_NUM_CTX, OLLAMA_NUM_PREDICT,
-    OLLAMA_TEMPERATURE, GEMINI_MODEL,
+    OLLAMA_TEMPERATURE, OLLAMA_NUM_GPU, GEMINI_MODEL, CLAUDE_MODEL,
 )
 
 _PROMPT = Path("src/llm/prompts/classify.txt").read_text()
@@ -19,7 +20,7 @@ _OPTIONS = {
     "num_ctx":     OLLAMA_NUM_CTX,
     "num_predict": OLLAMA_NUM_PREDICT,
     "temperature": OLLAMA_TEMPERATURE,
-    "num_gpu": 40
+    "num_gpu": OLLAMA_NUM_GPU
 }
 
 
@@ -30,6 +31,8 @@ class LLMClient:
         self._provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
         if self._provider == "gemini":
             self._init_gemini()
+        elif self._provider == "claude":
+            self._init_claude()
         else:
             self._init_ollama()
 
@@ -41,6 +44,15 @@ class LLMClient:
         import google.genai as genai
         self._gemini_client = genai.Client(api_key=api_key)
         self._gemini_model_name = os.environ.get("GEMINI_MODEL", GEMINI_MODEL)
+
+    # ── Claude setup ──────────────────────────────────────────────────
+    def _init_claude(self) -> None:
+        api_key = os.environ.get("CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("CLAUDE_API_KEY must be set when LLM_PROVIDER=claude")
+        import anthropic
+        self._claude_client = anthropic.Anthropic(api_key=api_key)
+        self._claude_model_name = os.environ.get("CLAUDE_MODEL", CLAUDE_MODEL)
 
     # ── Ollama setup ──────────────────────────────────────────────────
     def _init_ollama(self) -> None:
@@ -69,6 +81,8 @@ class LLMClient:
 
         if self._provider == "gemini":
             return self._analyze_gemini(user_content)
+        if self._provider == "claude":
+            return self._analyze_claude(user_content)
         return self._analyze_ollama(user_content)
 
     # ── Gemini inference ──────────────────────────────────────────────
@@ -102,6 +116,36 @@ class LLMClient:
             return analysis
         except Exception as e:
             print(f"[ERROR] Gemini API failed: {e}")
+            return self.fallback()
+
+    # ── Claude inference ──────────────────────────────────────────────
+    def _analyze_claude(self, user_content: str) -> dict:
+        """Call Anthropic Claude — returns structured JSON with token counts."""
+        t_start = time.perf_counter()
+        try:
+            response = self._claude_client.messages.create(
+                model=self._claude_model_name,
+                max_tokens=OLLAMA_NUM_PREDICT,
+                temperature=0.1,
+                system=_PROMPT,
+                messages=[{"role": "user", "content": user_content}],
+            )
+            ttft_ms = (time.perf_counter() - t_start) * 1000
+
+            raw = "".join(
+                block.text for block in response.content
+                if getattr(block, "type", None) == "text"
+            ).strip()
+            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            analysis = json.loads(raw)
+            analysis.update({
+                "ttft_ms": round(ttft_ms, 2),
+                "input_tokens":  getattr(response.usage, "input_tokens", 0),
+                "output_tokens": getattr(response.usage, "output_tokens", 0),
+            })
+            return analysis
+        except Exception as e:
+            print(f"[ERROR] Claude API failed: {e}")
             return self.fallback()
 
     # ── Ollama inference ──────────────────────────────────────────────

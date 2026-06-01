@@ -15,9 +15,10 @@ from src.ingestion.schema import NormalizedLog
 
 try:
     from src.llm.cache import SemanticCache
-    HAS_SENTENCE_TRANSFORMERS = True
+    import ollama as _ollama_check
+    HAS_CACHE_DEPS = True
 except ImportError:
-    HAS_SENTENCE_TRANSFORMERS = False
+    HAS_CACHE_DEPS = False
 
 
 def _make_log(
@@ -36,8 +37,8 @@ def _make_log(
     )
 
 
-@pytest.mark.skipif(not HAS_SENTENCE_TRANSFORMERS,
-                    reason="sentence-transformers not installed")
+@pytest.mark.skipif(not HAS_CACHE_DEPS,
+                    reason="ollama or numpy not installed")
 class TestSemanticCache:
     @pytest.fixture(autouse=True)
     def setup(self):

@@ -313,6 +313,20 @@ body {
   white-space: nowrap;
 }
 
+.raw-log-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* ── Alert detail panel ────────────────────── */
 .detail-panel {
   padding: 24px;
@@ -676,4 +690,198 @@ body {
   .severity-bar {
     flex-wrap: wrap;
   }
+}
+
+/* ────────────── Filter bar ────────────── */
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.severity-badge {
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 120ms ease, transform 120ms ease, border-color 120ms ease;
+}
+
+.severity-badge.dim {
+  opacity: 0.4;
+}
+
+.severity-badge.active {
+  border-color: currentColor;
+  box-shadow: 0 0 0 1px currentColor inset;
+}
+
+.severity-badge:hover:not(.dim) {
+  transform: translateY(-1px);
+}
+
+.filter-controls {
+  background: var(--bg-card, rgba(255,255,255,0.02));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 10px;
+  padding: 10px 12px;
+  align-items: flex-end;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.filter-group > label {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #94a3b8);
+}
+
+.filter-group-input {
+  flex: 1 1 160px;
+}
+
+.filter-group-input input {
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: inherit;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.filter-group-input input:focus {
+  border-color: var(--accent-cyan, #06b6d4);
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.filter-chip {
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary, #94a3b8);
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-transform: capitalize;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.filter-chip:hover {
+  border-color: var(--accent-cyan, #06b6d4);
+  color: var(--text, #e2e8f0);
+}
+
+.filter-chip.active {
+  background: rgba(6,182,212,0.15);
+  color: var(--accent-cyan, #06b6d4);
+  border-color: var(--accent-cyan, #06b6d4);
+}
+
+.filter-chip-empty {
+  font-size: 0.75rem;
+  color: var(--text-secondary, #94a3b8);
+  padding: 3px 4px;
+}
+
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 0.78rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.filter-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent-cyan, #06b6d4);
+}
+
+.filter-clear {
+  background: transparent;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  color: var(--text-secondary, #94a3b8);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  align-self: flex-end;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.filter-clear:not(:disabled):hover {
+  border-color: var(--accent-red, #ef4444);
+  color: var(--accent-red, #ef4444);
+}
+
+.filter-clear:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.empty-state-filtered {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-secondary, #94a3b8);
+}
+
+/* ── Pagination controls ──────────────────── */
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-color);
+}
+
+.pagination-btn {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.pagination-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pagination-info {
+  font-size: 0.78rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
 }
