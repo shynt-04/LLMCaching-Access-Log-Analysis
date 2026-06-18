@@ -1,8 +1,6 @@
 export default function AlertDetail({ alert }) {
   const analysis = alert.analysis || {}
-  const severity = alert.merged_score >= 0.85 ? 'CRITICAL'
-    : alert.merged_score >= 0.7 ? 'HIGH'
-    : alert.merged_score >= 0.5 ? 'MEDIUM' : 'LOW'
+  const severity = getSeverity(alert).toUpperCase()
 
   const severityColor = {
     CRITICAL: 'var(--severity-critical)',
@@ -59,10 +57,6 @@ export default function AlertDetail({ alert }) {
             <label>Endpoint</label>
             <span>{alert.path}</span>
           </div>
-          <div className="detail-field">
-            <label>Window Size</label>
-            <span>{alert.window_size} events</span>
-          </div>
         </div>
       </div>
 
@@ -76,6 +70,40 @@ export default function AlertDetail({ alert }) {
           <ScoreRow label="LLM Confidence" value={analysis.confidence} />
         )}
       </div>
+
+      {/* Cache metadata */}
+      {(alert.cache_hit || alert.cache_decision_reason) && (
+        <div className="detail-section">
+          <div className="detail-section-title">Cache Policy</div>
+          <div className="detail-grid">
+            <div className="detail-field">
+              <label>Mode</label>
+              <span>{alert.cache_policy_mode || analysis.cache_policy_mode || 'attack_type_aware'}</span>
+            </div>
+            <div className="detail-field">
+              <label>Hit Type</label>
+              <span>{alert.cache_hit_type || analysis.cache_hit_type || 'miss'}</span>
+            </div>
+            <div className="detail-field">
+              <label>Cached Type</label>
+              <span>{alert.cached_attack_type || analysis.cached_attack_type || '-'}</span>
+            </div>
+            <div className="detail-field">
+              <label>Similarity</label>
+              <span>
+                {alert.cache_similarity !== null && alert.cache_similarity !== undefined
+                  ? alert.cache_similarity.toFixed(3)
+                  : analysis.cache_similarity !== null && analysis.cache_similarity !== undefined
+                    ? analysis.cache_similarity.toFixed(3)
+                    : '-'}
+              </span>
+            </div>
+          </div>
+          <div className="detail-explanation" style={{ marginTop: '10px' }}>
+            {alert.cache_decision_reason || analysis.cache_decision_reason || 'LLM call without cache reuse.'}
+          </div>
+        </div>
+      )}
 
       {/* LLM Explanation */}
       {analysis.explanation && (
@@ -184,6 +212,35 @@ export default function AlertDetail({ alert }) {
       */}
     </div>
   )
+}
+
+const VALID_SEVERITIES = new Set(['low', 'medium', 'high', 'critical'])
+const SEVERITY_ALIASES = {
+  crit: 'critical',
+  med: 'medium',
+  warn: 'medium',
+  warning: 'medium',
+  info: 'low',
+  informational: 'low',
+}
+
+function normalizeSeverity(value) {
+  const text = String(value || '').trim().toLowerCase()
+  const normalized = SEVERITY_ALIASES[text] || text
+  return VALID_SEVERITIES.has(normalized) ? normalized : null
+}
+
+function scoreFallbackSeverity(score) {
+  if (score >= 0.85) return 'critical'
+  if (score >= 0.7) return 'high'
+  if (score >= 0.5) return 'medium'
+  return 'low'
+}
+
+function getSeverity(alert) {
+  return normalizeSeverity(alert?.severity)
+    || normalizeSeverity(alert?.analysis?.severity)
+    || scoreFallbackSeverity(alert?.merged_score || 0)
 }
 
 function ScoreRow({ label, value }) {

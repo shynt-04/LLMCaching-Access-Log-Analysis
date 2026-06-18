@@ -2,12 +2,34 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import AlertDetail from './AlertDetail'
 import AlertFilters from './AlertFilters'
 
-/** Classify merged_score into severity level */
-function getSeverity(score) {
+const VALID_SEVERITIES = new Set(['low', 'medium', 'high', 'critical'])
+const SEVERITY_ALIASES = {
+  crit: 'critical',
+  med: 'medium',
+  warn: 'medium',
+  warning: 'medium',
+  info: 'low',
+  informational: 'low',
+}
+
+function normalizeSeverity(value) {
+  const text = String(value || '').trim().toLowerCase()
+  const normalized = SEVERITY_ALIASES[text] || text
+  return VALID_SEVERITIES.has(normalized) ? normalized : null
+}
+
+/** Fallback only for older alerts that do not include analysis.severity. */
+function scoreFallbackSeverity(score) {
   if (score >= 0.85) return 'critical'
   if (score >= 0.7) return 'high'
   if (score >= 0.5) return 'medium'
   return 'low'
+}
+
+function getSeverity(alert) {
+  return normalizeSeverity(alert?.severity)
+    || normalizeSeverity(alert?.analysis?.severity)
+    || scoreFallbackSeverity(alert?.merged_score || 0)
 }
 
 /** Stable identity for an alert. Line number is unique within one analysis session. */
@@ -28,7 +50,7 @@ const EMPTY_FILTERS = {
 /** Client-side fallback when no session or API is unavailable */
 function matchesFilters(alert, filters) {
   if (filters.severities.size > 0) {
-    if (!filters.severities.has(getSeverity(alert.merged_score))) return false
+    if (!filters.severities.has(getSeverity(alert))) return false
   }
   if (filters.attackTypes.size > 0) {
     const t = alert.analysis?.attack_type || 'unknown'
@@ -59,7 +81,15 @@ function matchesFilters(alert, filters) {
   return true
 }
 
-export default function AlertDashboard({ alerts, activeSession, apiUrl }) {
+export default function AlertDashboard({
+  alerts,
+  activeSession,
+  apiUrl,
+  progress,
+  metrics,
+  sessionInfo,
+  onReload,
+}) {
   const [selectedKey, setSelectedKey] = useState(null)
   const [filters, setFilters] = useState(EMPTY_FILTERS)
   const [showRawLogs, setShowRawLogs] = useState(false)
@@ -77,7 +107,7 @@ export default function AlertDashboard({ alerts, activeSession, apiUrl }) {
 
   const counts = useMemo(() => {
     const c = { critical: 0, high: 0, medium: 0, low: 0 }
-    alerts.forEach(a => { c[getSeverity(a.merged_score)]++ })
+    alerts.forEach(a => { c[getSeverity(a)]++ })
     return c
   }, [alerts])
 
@@ -169,6 +199,52 @@ export default function AlertDashboard({ alerts, activeSession, apiUrl }) {
 
   return (
     <div className="page">
+      <div className="dashboard-status">
+        <div>
+          <div className="dashboard-status-title">Input Dir</div>
+          <div className="dashboard-status-meta">
+            <span>{sessionInfo?.input_dir || 'input'}</span>
+            <span>{sessionInfo?.source || 'auto'}</span>
+            <span>{sessionInfo?.use_cache ? 'cache enabled' : 'cache disabled'}</span>
+          </div>
+          {sessionInfo?.input_files?.length > 0 && (
+            <div className="dashboard-status-files">
+              {sessionInfo.input_files.join(', ')}
+            </div>
+          )}
+        </div>
+
+        <div className="dashboard-status-actions">
+          {progress && (
+            <div className="dashboard-progress">
+              <div className="progress-bar-outer">
+                <div
+                  className="progress-bar-inner"
+                  style={{
+                    width: progress.total > 0
+                      ? `${(progress.processed / progress.total) * 100}%`
+                      : '0%'
+                  }}
+                />
+              </div>
+              <span>{progress.processed} / {progress.total} lines</span>
+            </div>
+          )}
+
+          {metrics && (
+            <div className="dashboard-metrics">
+              <span>{metrics.total_alerts} alerts</span>
+              <span>{metrics.total_llm_calls} LLM calls</span>
+              <span>{(metrics.cache_hit_rate * 100).toFixed(1)}% cache hit</span>
+            </div>
+          )}
+
+          <button type="button" className="reload-btn" onClick={onReload}>
+            Reload Input
+          </button>
+        </div>
+      </div>
+
       {/* Severity summary + filter bar */}
       <AlertFilters
         alerts={alerts}
@@ -187,7 +263,7 @@ export default function AlertDashboard({ alerts, activeSession, apiUrl }) {
             </svg>
             <p>No alerts yet</p>
             <p style={{ fontSize: '0.8rem' }}>
-              Upload a log file in the Analysis Lab to start detecting threats
+              The app analyzes log files from the configured input directory when the backend starts.
             </p>
           </div>
         </div>

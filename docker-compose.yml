@@ -1,0 +1,16 @@
+services:
+  log-analyzer:
+    build: .
+    env_file:
+      - .env
+    environment:
+      LOG_INPUT_DIR: /app/input
+      LOG_SOURCE: auto
+      USE_CACHE: "true"
+      AUTO_START_ANALYSIS: "true"
+      LLM_PROVIDER: ${LLM_PROVIDER:-nvidia}
+      CACHE_EMBED_PROVIDER: ${CACHE_EMBED_PROVIDER:-nvidia}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./input:/app/input:ro

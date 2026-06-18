@@ -1,12 +1,10 @@
-# api/main.py
-"""FastAPI backend — serves Alert Dashboard + Analysis Lab.
+"""FastAPI backend for the alert dashboard demo.
 
-Endpoints:
-  POST /api/analyze       — upload log file, start background processing
-  GET  /api/sessions      — list active/completed sessions
-  GET  /api/metrics/{id}  — fetch benchmark metrics for a session
-  WS   /api/ws/{session}  — stream alerts in real-time
+At startup the app reads access-log files from a fixed local input directory and
+starts one background analysis session. The React dashboard connects to that
+session through REST and WebSocket APIs.
 """
+
 import asyncio
 import json
 import os
@@ -20,20 +18,19 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-# Load .env before any src imports (config reads env vars)
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 
-# Ensure project root is on sys.path for src imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
-from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from src.pipeline import Pipeline
 from src.ingestion.normalizer import Normalizer
+from src.pipeline import Pipeline
 
 app = FastAPI(title="LLM Log Analysis", version="1.0")
 
@@ -44,14 +41,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory state ──────────────────────────────────────────────────
-# session_id → { "status", "alerts", "metrics", "progress", "total_lines" }
+LOG_INPUT_DIR = Path(os.environ.get("LOG_INPUT_DIR", "input"))
+if not LOG_INPUT_DIR.is_absolute():
+    LOG_INPUT_DIR = PROJECT_ROOT / LOG_INPUT_DIR
+
+LOG_SOURCE = os.environ.get("LOG_SOURCE", "auto")
+USE_CACHE = os.environ.get("USE_CACHE", "true").lower() not in {"0", "false", "no"}
+AUTO_START_ANALYSIS = (
+    os.environ.get("AUTO_START_ANALYSIS", "true").lower() not in {"0", "false", "no"}
+)
+STATIC_DIR = PROJECT_ROOT / "web" / "dist"
+
+# session_id -> { "status", "alerts", "metrics", "progress", "total_lines" }
 sessions: dict[str, dict] = {}
-# session_id → list of connected WebSocket clients
 ws_clients: dict[str, list[WebSocket]] = defaultdict(list)
 
 
-# ── WebSocket manager ────────────────────────────────────────────────
 async def broadcast(session_id: str, message: dict) -> None:
     """Push a JSON message to all WebSocket clients subscribed to a session."""
     dead = []
@@ -69,7 +74,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
     ws_clients[session_id].append(websocket)
 
-    # Send existing alerts to newly connected client (catch-up)
     if session_id in sessions:
         for alert_json in sessions[session_id].get("alerts", []):
             try:
@@ -77,44 +81,87 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             except Exception:
                 break
 
+        session = sessions[session_id]
+        if session.get("status") == "processing":
+            await websocket.send_json(
+                {
+                    "type": "progress",
+                    "data": {
+                        "processed": session.get("progress", 0),
+                        "total": session.get("total_lines", 0),
+                    },
+                }
+            )
+        elif session.get("status") == "done":
+            await websocket.send_json({"type": "done", "data": session.get("metrics", {})})
+
     try:
         while True:
-            # Keep connection alive; client sends pings
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_clients[session_id].remove(websocket)
 
 
-# ── Upload & Analyze ─────────────────────────────────────────────────
-@app.post("/api/analyze")
-async def analyze_log(
-    file: UploadFile = File(...),
-    source: str = Form("auto"),
-    use_cache: bool = Form(True),
-):
-    """Accept a log file upload and start background processing."""
+def _read_input_directory(input_dir: Path) -> tuple[list[str], list[str]]:
+    """Read non-empty lines from all regular files in the configured directory."""
+    input_dir.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    filenames: list[str] = []
+
+    for path in sorted(input_dir.iterdir()):
+        if not path.is_file() or path.name.startswith("."):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        file_lines = [line for line in text.splitlines() if line.strip()]
+        if not file_lines:
+            continue
+        filenames.append(path.name)
+        lines.extend(file_lines)
+
+    return lines, filenames
+
+
+async def start_input_directory_analysis() -> dict:
+    """Create a dashboard session from files in LOG_INPUT_DIR."""
     session_id = str(uuid.uuid4())
-    content = (await file.read()).decode("utf-8", errors="replace")
-    lines = [l for l in content.splitlines() if l.strip()]
+    lines, input_files = _read_input_directory(LOG_INPUT_DIR)
 
     sessions[session_id] = {
-        "status": "processing",
+        "status": "processing" if lines else "idle",
         "alerts": [],
         "metrics": {},
         "progress": 0,
         "total_lines": len(lines),
-        "use_cache": use_cache,
-        "filename": file.filename,
+        "use_cache": USE_CACHE,
+        "filename": ", ".join(input_files) if input_files else None,
+        "input_files": input_files,
+        "input_dir": str(LOG_INPUT_DIR),
+        "source": LOG_SOURCE,
+        "created_at": time.time(),
     }
 
-    # Run pipeline in background to avoid blocking
-    asyncio.create_task(_process_lines(session_id, lines, source, use_cache))
+    if lines:
+        asyncio.create_task(_process_lines(session_id, lines, LOG_SOURCE, USE_CACHE))
 
     return {
         "session_id": session_id,
         "total_lines": len(lines),
-        "message": "Processing started",
+        "input_files": input_files,
+        "input_dir": str(LOG_INPUT_DIR),
+        "message": "Processing started" if lines else "No log files found in input directory",
     }
+
+
+@app.on_event("startup")
+async def startup_analysis() -> None:
+    if AUTO_START_ANALYSIS:
+        await start_input_directory_analysis()
+
+
+@app.post("/api/reload-input")
+async def reload_input_directory():
+    """Start a fresh session from the fixed local input directory."""
+    return await start_input_directory_analysis()
 
 
 async def _process_lines(
@@ -123,17 +170,19 @@ async def _process_lines(
     source: str,
     use_cache: bool,
 ) -> None:
-    """Process log lines through the pipeline and stream results via WS."""
+    """Process log lines through the pipeline and stream results via WebSocket."""
     pipeline = Pipeline(use_cache=use_cache)
     normalizer = Normalizer()
 
     if source == "auto":
         source = normalizer.detect_source(lines[:10])
+        sessions[session_id]["source"] = source
 
     latencies: list[float] = []
     total_input_tokens = 0
     total_output_tokens = 0
     cache_hits = 0
+    cache_hit_types: dict[str, int] = defaultdict(int)
     total_alerts = 0
 
     progress_interval = max(1, len(lines) // 100)
@@ -161,22 +210,19 @@ async def _process_lines(
             total_output_tokens += alert.output_tokens
             if alert.cache_hit:
                 cache_hits += 1
+                cache_hit_types[alert.cache_hit_type or "unknown"] += 1
 
-            # Stream alert to all connected clients
             await broadcast(session_id, {"type": "alert", "data": alert_data})
 
-        # Throttle progress broadcasts to ~1% intervals
         sessions[session_id]["progress"] = i + 1
         if (i + 1) % progress_interval == 0 or i == len(lines) - 1:
-            await broadcast(session_id, {
-                "type": "progress",
-                "data": {"processed": i + 1, "total": len(lines)},
-            })
+            await broadcast(
+                session_id,
+                {"type": "progress", "data": {"processed": i + 1, "total": len(lines)}},
+            )
 
-        # Yield control to event loop to allow WS sends
         await asyncio.sleep(0)
 
-    # Compute final metrics
     sorted_lat = sorted(latencies)
     p95_idx = int(len(sorted_lat) * 0.95) if sorted_lat else 0
     total_time_s = sum(latencies) / 1000.0
@@ -189,11 +235,15 @@ async def _process_lines(
         "latency_p95_ms": round(sorted_lat[p95_idx], 2) if sorted_lat else 0,
         "latency_avg_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0,
         "cache_hits": cache_hits,
+        "cache_hit_types": dict(cache_hit_types),
         "cache_hit_rate": round(cache_hits / total_alerts, 3) if total_alerts > 0 else 0,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
         "total_llm_calls": total_alerts - cache_hits,
         "use_cache": use_cache,
+        "input_files": sessions[session_id].get("input_files", []),
+        "input_dir": sessions[session_id].get("input_dir"),
+        "source": source,
     }
 
     sessions[session_id]["metrics"] = metrics
@@ -202,7 +252,6 @@ async def _process_lines(
     await broadcast(session_id, {"type": "done", "data": metrics})
 
 
-# ── REST endpoints ───────────────────────────────────────────────────
 @app.get("/api/sessions")
 async def list_sessions():
     """List all sessions with summary info."""
@@ -214,6 +263,10 @@ async def list_sessions():
             "total_alerts": len(s["alerts"]),
             "use_cache": s.get("use_cache"),
             "filename": s.get("filename"),
+            "input_files": s.get("input_files", []),
+            "input_dir": s.get("input_dir"),
+            "source": s.get("source"),
+            "created_at": s.get("created_at"),
         }
         for sid, s in sessions.items()
     }
@@ -235,9 +288,27 @@ async def get_alerts(session_id: str):
     return sessions[session_id]["alerts"]
 
 
-# ── Filter/Search API ────────────────────────────────────────────────
-def _get_severity(score: float) -> str:
-    """Classify merged_score into severity level."""
+_VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+_SEVERITY_ALIASES = {
+    "crit": "critical",
+    "med": "medium",
+    "warn": "medium",
+    "warning": "medium",
+    "info": "low",
+    "informational": "low",
+}
+
+
+def _normalize_severity(value: object) -> str | None:
+    text = str(value or "").strip().lower()
+    text = _SEVERITY_ALIASES.get(text, text)
+    if text in _VALID_SEVERITIES:
+        return text
+    return None
+
+
+def _score_fallback_severity(score: float) -> str:
+    """Fallback only for older alerts that do not include analysis.severity."""
     if score >= 0.85:
         return "critical"
     if score >= 0.70:
@@ -245,6 +316,16 @@ def _get_severity(score: float) -> str:
     if score >= 0.50:
         return "medium"
     return "low"
+
+
+def _get_severity(alert: dict) -> str:
+    """Return alert severity from LLM analysis, with score fallback for old data."""
+    analysis = alert.get("analysis") or {}
+    return (
+        _normalize_severity(alert.get("severity"))
+        or _normalize_severity(analysis.get("severity"))
+        or _score_fallback_severity(float(alert.get("merged_score", 0) or 0))
+    )
 
 
 @app.get("/api/alerts/{session_id}/search")
@@ -267,27 +348,22 @@ async def search_alerts(
     filtered = []
 
     for alert in all_alerts:
-        # Severity filter
-        if severity:
-            if _get_severity(alert.get("merged_score", 0)) not in severity:
-                continue
+        if severity and _get_severity(alert) not in severity:
+            continue
 
-        # Attack type filter
         if attack_type:
             a_type = (alert.get("analysis") or {}).get("attack_type", "unknown")
             if a_type not in attack_type:
                 continue
 
-        # IP substring filter
-        if ip:
-            if ip.lower() not in (alert.get("source_ip") or "").lower():
-                continue
+        if ip and ip.lower() not in (alert.get("source_ip") or "").lower():
+            continue
 
-        # Full-text search across alert fields, including the original line for alerted events.
         if search:
             q = search.lower()
             haystack = " ".join(
-                str(v) for v in [
+                str(v)
+                for v in [
                     alert.get("line_number"),
                     alert.get("source_ip"),
                     alert.get("method"),
@@ -298,26 +374,27 @@ async def search_alerts(
                     alert.get("raw_line"),
                     alert.get("matched_rules"),
                     alert.get("attack_types"),
+                    alert.get("severity"),
                     (alert.get("analysis") or {}).get("attack_type"),
+                    (alert.get("analysis") or {}).get("severity"),
                     (alert.get("analysis") or {}).get("explanation"),
                     (alert.get("analysis") or {}).get("cve_refs"),
-                ] if v
+                ]
+                if v
             ).lower()
             if q not in haystack:
                 continue
 
         filtered.append(alert)
 
-    # Sorting
     reverse = sort_order == "desc"
     if sort_by == "merged_score":
         filtered.sort(key=lambda a: a.get("merged_score", 0), reverse=reverse)
     elif sort_by == "timestamp":
         filtered.sort(key=lambda a: a.get("timestamp", ""), reverse=reverse)
-    else:  # line_number (default)
+    else:
         filtered.sort(key=lambda a: a.get("line_number", 0), reverse=reverse)
 
-    # Pagination
     total = len(filtered)
     page = max(1, page)
     page_size = max(1, min(page_size, 200))
@@ -336,4 +413,13 @@ async def search_alerts(
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "provider": os.environ.get("LLM_PROVIDER", "ollama")}
+    return {
+        "status": "ok",
+        "provider": os.environ.get("LLM_PROVIDER", "nvidia"),
+        "input_dir": str(LOG_INPUT_DIR),
+        "auto_start_analysis": AUTO_START_ANALYSIS,
+    }
+
+
+if STATIC_DIR.exists():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

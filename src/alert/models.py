@@ -16,18 +16,23 @@ class Alert:
     merged_score: float
     rule_score: float
     ml_score: float
+    severity: str
 
     # LLM analysis
     analysis: dict = field(default_factory=dict)
     cache_hit: bool = False
+    cache_hit_type: str | None = None
+    cache_similarity: float | None = None
+    cached_attack_type: str | None = None
+    cache_decision_reason: str | None = None
+    cache_policy_mode: str | None = None
 
     # Token usage — for benchmark metrics
     input_tokens: int = 0
     output_tokens: int = 0
     ttft_ms: float | None = None
 
-    # Context
-    window_size: int = 0
+    # Detection metadata
     matched_rules: list[str] = field(default_factory=list)
     attack_types: list[str] = field(default_factory=list)
 
@@ -46,9 +51,17 @@ class Alert:
             "merged_score": round(self.merged_score, 4),
             "rule_score": round(self.rule_score, 4),
             "ml_score": round(self.ml_score, 4),
+            "severity": self.severity,
             "cache_hit": self.cache_hit,
+            "cache_hit_type": self.cache_hit_type,
+            "cache_similarity": (
+                round(self.cache_similarity, 4)
+                if self.cache_similarity is not None else None
+            ),
+            "cached_attack_type": self.cached_attack_type,
+            "cache_decision_reason": self.cache_decision_reason,
+            "cache_policy_mode": self.cache_policy_mode,
             "analysis": self.analysis,
             "matched_rules": self.matched_rules,
             "attack_types": self.attack_types,
-            "window_size": self.window_size,
         })

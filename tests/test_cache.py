@@ -15,10 +15,28 @@ from src.ingestion.schema import NormalizedLog
 
 try:
     from src.llm.cache import SemanticCache
-    import ollama as _ollama_check
     HAS_CACHE_DEPS = True
 except ImportError:
     HAS_CACHE_DEPS = False
+
+
+class DummyNvidiaEmbedder:
+    model = "dummy-nvidia-embed"
+
+    def __init__(self, model: str | None = None) -> None:
+        if model:
+            self.model = model
+
+    def embed(self, text: str, truncate: int = 512) -> np.ndarray:
+        if "etc/passwd" in text or "../" in text:
+            vec = np.array([1.0, 0.0], dtype=np.float32)
+        elif "/home " in text or "/home?" in text:
+            vec = np.array([1.0, 0.0], dtype=np.float32)
+        elif "/api/users" in text or "/home2" in text:
+            vec = np.array([0.0, 1.0], dtype=np.float32)
+        else:
+            vec = np.array([0.7, 0.7], dtype=np.float32)
+        return vec / np.linalg.norm(vec)
 
 
 def _make_log(
@@ -38,10 +56,16 @@ def _make_log(
 
 
 @pytest.mark.skipif(not HAS_CACHE_DEPS,
-                    reason="ollama or numpy not installed")
+                    reason="cache dependencies not installed")
 class TestSemanticCache:
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, monkeypatch):
+        monkeypatch.setenv("LLM_PROVIDER", "nvidia")
+        monkeypatch.setenv("CACHE_EMBED_PROVIDER", "nvidia")
+        monkeypatch.setattr(
+            "src.llm.nvidia_client.NvidiaEmbedder",
+            DummyNvidiaEmbedder,
+        )
         self.cache = SemanticCache()
 
     def test_empty_cache_miss(self):
@@ -108,7 +132,7 @@ class TestSemanticCache:
         assert self.cache.size == 0
         log = _make_log(path="/test")
         _, emb = self.cache.lookup(log)
-        self.cache.store(emb, {"test": True})
+        self.cache.store(emb, {"attack_type": "sqli", "confidence": 0.9})
         assert self.cache.size == 1
 
     def test_clear(self):
@@ -118,3 +142,65 @@ class TestSemanticCache:
         self.cache.store(emb, {"test": True})
         self.cache.clear()
         assert self.cache.size == 0
+
+
+def _policy_cache(monkeypatch):
+    from src.llm.cache import SemanticCache
+
+    cache = SemanticCache.__new__(SemanticCache)
+    cache._entries = []
+    cache._exact = {}
+    cache._embedding_matrix = None
+    cache._max_size = 128
+    cache._last_key = None
+    cache._lookups = 0
+    cache._hits = 0
+    cache._semantic_rejects = 0
+    monkeypatch.setattr(cache, "_embed", lambda key: np.array([1.0, 0.0], dtype=np.float32))
+    return cache
+
+
+def test_attack_type_aware_cache_rejects_cross_type(monkeypatch):
+    from src.llm.cache import CacheContext
+
+    cache = _policy_cache(monkeypatch)
+    seed_log = _make_log(path="/search", query_string="q=1 union select password")
+    cache.lookup(seed_log, CacheContext(attack_types=["sqli"], matched_rules=["sqli_union_or_boolean"]))
+    cache.store(
+        np.array([1.0, 0.0], dtype=np.float32),
+        {"attack_type": "sqli", "confidence": 0.95, "severity": "high"},
+        CacheContext(attack_types=["sqli"], matched_rules=["sqli_union_or_boolean"]),
+    )
+
+    xss_log = _make_log(path="/search", query_string="q=<script>alert(1)</script>")
+    result = cache.lookup(
+        xss_log,
+        CacheContext(attack_types=["xss"], matched_rules=["xss_script_or_handler"]),
+    )
+
+    assert result.analysis is None
+    assert result.hit_type == "rejected"
+    assert "attack_type_mismatch" in result.decision_reason
+
+
+def test_normal_verdict_is_exact_only(monkeypatch):
+    from src.llm.cache import CacheContext
+
+    cache = _policy_cache(monkeypatch)
+    normal_log = _make_log(path="/home")
+    cache.lookup(normal_log, CacheContext(attack_types=[]))
+    cache.store(
+        np.array([1.0, 0.0], dtype=np.float32),
+        {"attack_type": "normal", "confidence": 0.95, "label": 0},
+        CacheContext(attack_types=[]),
+    )
+
+    assert cache.size == 0
+
+    exact = cache.lookup(normal_log, CacheContext(attack_types=[]))
+    assert exact.analysis is not None
+    assert exact.hit_type == "exact"
+
+    near_neighbor = _make_log(path="/home2")
+    semantic = cache.lookup(near_neighbor, CacheContext(attack_types=[]))
+    assert semantic.analysis is None

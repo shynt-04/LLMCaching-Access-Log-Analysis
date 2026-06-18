@@ -1,14 +1,45 @@
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import parse_qsl, unquote
 
 import numpy as np
-import ollama as _ollama
 
-from src.config import CACHE_SIMILARITY, CACHE_MAX_SIZE, OLLAMA_EMBED_MODEL, OLLAMA_HOST
+from src.config import (
+    CACHE_ATTACK_THRESHOLDS,
+    CACHE_EXACT_ONLY_TYPES,
+    CACHE_MAX_SIZE,
+    CACHE_MIN_CONFIDENCE,
+    CACHE_POLICY_MODE,
+    CACHE_SIMILARITY,
+)
 from src.ingestion.schema import NormalizedLog
+
+
+@dataclass
+class CacheContext:
+    attack_types: list[str] = field(default_factory=list)
+    matched_rules: list[str] = field(default_factory=list)
+    rule_score: float = 0.0
+    ml_score: float = 0.0
+    merged_score: float = 0.0
+    risk_score: float | None = None
+
+
+@dataclass
+class CacheLookupResult:
+    analysis: dict | None
+    embedding: np.ndarray | None
+    hit: bool
+    hit_type: str
+    similarity: float | None
+    cached_attack_type: str | None
+    decision_reason: str
+
+    def __iter__(self):
+        yield self.analysis
+        yield self.embedding
 
 
 @dataclass
@@ -16,21 +47,21 @@ class CacheEntry:
     embedding: np.ndarray
     analysis: dict
     created_at: datetime
+    attack_type: str
+    rule_family: str
+    confidence: float
+    risk_score: float
     hit_count: int = 0
 
 
 class SemanticCache:
-    """Two-level cache for LLM analyses.
-
-    Level 1 is an exact cache over canonicalized request keys and avoids the
-    embedding API entirely. Level 2 is semantic similarity over canonicalized
-    request text for near-duplicate attack variants.
-    """
+    """Exact + semantic cache with attack-type-aware reuse policy."""
 
     def __init__(self) -> None:
-        host = os.environ.get("OLLAMA_HOST", OLLAMA_HOST)
-        self._client = _ollama.Client(host=host)
-        self._embed_model = os.environ.get("OLLAMA_EMBED_MODEL", OLLAMA_EMBED_MODEL)
+        self._embed_provider = self._resolve_embed_provider()
+        self._client = None
+        self._embedder = None
+        self._embed_model = ""
         self._entries: list[CacheEntry] = []
         self._exact: dict[str, dict] = {}
         self._embedding_matrix: np.ndarray | None = None
@@ -38,24 +69,41 @@ class SemanticCache:
         self._last_key: str | None = None
         self._lookups = 0
         self._hits = 0
-        self._verify_embed_model()
+        self._semantic_rejects = 0
+        self._init_embedder()
 
-    def _verify_embed_model(self) -> None:
-        """Check that the embedding model is pulled in Ollama."""
-        try:
-            available = [m.model for m in self._client.list().models]
-            if (self._embed_model not in available
-                    and f"{self._embed_model}:latest" not in available):
-                print(
-                    f"[Cache] Embedding model '{self._embed_model}' not found. "
-                    f"Run: ollama pull {self._embed_model}"
-                )
-        except Exception as e:
-            print(f"[Cache] Could not verify embedding model: {e}")
+    @staticmethod
+    def _resolve_embed_provider() -> str:
+        provider = os.environ.get("CACHE_EMBED_PROVIDER")
+        if provider is None:
+            provider = os.environ.get("LLM_PROVIDER", "nvidia")
+        provider = provider.lower().strip()
+        if provider in {"nvidia", "nim"}:
+            return "nvidia"
+        if provider == "ollama":
+            return "ollama"
+        raise ValueError(
+            f"Unsupported CACHE_EMBED_PROVIDER={provider!r}. "
+            "Use 'nvidia' or 'ollama'."
+        )
+
+    def _init_embedder(self) -> None:
+        if self._embed_provider == "ollama":
+            from src.llm.ollama_client import OllamaEmbedder
+
+            self._embedder = OllamaEmbedder(model=os.environ.get("OLLAMA_EMBED_MODEL"))
+            self._embed_model = self._embedder.model
+            print(f"[Cache] Using Ollama embedding model: {self._embed_model}")
+            return
+
+        from src.llm.nvidia_client import NvidiaEmbedder
+
+        self._embedder = NvidiaEmbedder(model=os.environ.get("NVIDIA_EMBED_MODEL"))
+        self._embed_model = self._embedder.model
+        print(f"[Cache] Using NVIDIA embedding model: {self._embed_model}")
 
     @staticmethod
     def _decode(value: str | None) -> str:
-        """Decode common nested URL-encoding without failing on malformed text."""
         if not value:
             return ""
         decoded = value
@@ -68,7 +116,6 @@ class SemanticCache:
 
     @classmethod
     def _normalize_token(cls, value: str) -> str:
-        """Collapse volatile tokens so equivalent attacks share cache keys."""
         value = cls._decode(value).lower().strip()
         value = re.sub(r"\b[0-9a-f]{16,}\b", "{hash}", value)
         value = re.sub(
@@ -87,7 +134,7 @@ class SemanticCache:
         value = re.sub(r"\b\d+\b", "{num}", value)
 
         if re.search(r"(\.\./|etc/passwd|win\.ini|php://|/proc/self|wp-config)", value):
-            return "{path_or_lfi}"
+            return "{lfi}"
         if re.search(
             r"(union\s+select|or\s+{num}\s*=\s*{num}|sleep\(|waitfor|"
             r"benchmark\(|information_schema)",
@@ -96,26 +143,50 @@ class SemanticCache:
             return "{sqli}"
         if re.search(r"(<script|onerror|onload|javascript:|<svg|document\.cookie)", value):
             return "{xss}"
+        if re.search(r"(\{\{.*\}\}|\$\{.*\}|<%=|freemarker|velocity|jinja)", value):
+            return "{ssti}"
         if re.search(r"(\$\(|`|&&|\|\||;|whoami|uname|/bin/bash|wget|curl|nc\s)", value):
             return "{cmd}"
         if re.search(r"(gopher://|file://|dict://|{internal_host}|{ip}:\d+)", value):
             return "{ssrf}"
+        if re.search(r"(\.php|\.jsp|\.aspx|\.phtml|filename=)", value):
+            return "{file_upload}"
+        return value
+
+    @classmethod
+    def _normalize_exact_token(cls, value: str) -> str:
+        """Normalize volatile values without collapsing payload families."""
+        value = cls._decode(value).lower().strip()
+        value = re.sub(r"\b[0-9a-f]{16,}\b", "{hash}", value)
+        value = re.sub(
+            r"\b[a-z0-9+/]{24,}={0,2}\b",
+            "{encoded}",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", "{ip}", value)
+        value = re.sub(
+            r"\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1|"
+            r"169\.254\.169\.254|metadata\.google\.internal)\b",
+            "{internal_host}",
+            value,
+        )
+        value = re.sub(r"\b\d+\b", "{num}", value)
         return value
 
     @classmethod
     def _canonical_key(cls, log: NormalizedLog) -> str:
-        """Build a stable key for exact cache hits before embedding lookup."""
         path = cls._decode(log.path).lower() or "/"
         path = re.sub(r"/+", "/", path)
         path = re.sub(r"/\d+(?=/|$)", "/{id}", path)
         path = re.sub(r"/[0-9a-f]{8,}(?=/|$)", "/{hash}", path)
-        path = cls._normalize_token(path) if path != "/" else path
+        path = cls._normalize_exact_token(path) if path != "/" else path
 
         query = cls._decode(log.query_string)
         pairs = parse_qsl(query, keep_blank_values=True)
         normalized_pairs = []
         for key, value in pairs:
-            normalized_pairs.append((key.lower(), cls._normalize_token(value)))
+            normalized_pairs.append((key.lower(), cls._normalize_exact_token(value)))
         normalized_pairs.sort()
         query_part = "&".join(f"{key}={value}" for key, value in normalized_pairs)
 
@@ -127,60 +198,253 @@ class SemanticCache:
         return f"{log.method.upper()} {path}?{query_part} ua={ua_family}"
 
     def _embed(self, key: str) -> np.ndarray:
-        """Create normalized embedding from canonical request text."""
-        response = self._client.embed(model=self._embed_model, input=key[:512])
-        vec = np.array(response.embeddings[0], dtype=np.float32)
-        norm = np.linalg.norm(vec)
-        if norm > 0:
-            vec /= norm
-        return vec
+        if self._embedder is None:
+            raise RuntimeError(f"{self._embed_provider} embedder is not initialized")
+        return self._embedder.embed(key, truncate=512)
 
-    def lookup(self, log: NormalizedLog) -> tuple[dict | None, np.ndarray | None]:
-        """Return (cached_analysis, embedding).
+    @staticmethod
+    def _normalize_attack_type(value: str | None) -> str:
+        value = (value or "unknown").lower().strip()
+        aliases = {
+            "path_traversal": "lfi",
+            "path traversal": "lfi",
+            "directory_traversal": "lfi",
+            "sql injection": "sqli",
+            "sql_injection": "sqli",
+            "cross_site_scripting": "xss",
+            "file upload": "file_upload",
+            "none": "normal",
+            "benign": "normal",
+        }
+        return aliases.get(value, value)
 
-        Exact canonical hits return before embedding, which keeps cache-hit
-        latency independent of the embedding API. On miss, the embedding is
-        returned so store() can avoid recomputing it.
-        """
+    @classmethod
+    def _primary_context_type(cls, context: CacheContext | None) -> str:
+        if context is None:
+            return "unknown"
+        for attack_type in context.attack_types:
+            normalized = cls._normalize_attack_type(attack_type)
+            if normalized not in ("", "unknown", "normal"):
+                return normalized
+        return "unknown"
+
+    @staticmethod
+    def _rule_family(attack_type: str, matched_rules: list[str] | None) -> str:
+        for rule in matched_rules or []:
+            rule_l = rule.lower()
+            for family in (
+                "sqli",
+                "xss",
+                "lfi",
+                "ssrf",
+                "ssti",
+                "file_upload",
+                "csrf",
+                "cve",
+                "dir_scan",
+            ):
+                if family in rule_l:
+                    return family
+            if "path_traversal" in rule_l:
+                return "lfi"
+        return attack_type
+
+    @classmethod
+    def _confidence(cls, analysis: dict) -> float:
+        try:
+            return float(analysis.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _risk_score(analysis: dict, context: CacheContext | None) -> float:
+        if context is not None and context.risk_score is not None:
+            return float(context.risk_score)
+        raw = analysis.get("risk_score")
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+        severity = str(analysis.get("severity", "")).lower()
+        return {
+            "critical": 9.0,
+            "high": 7.5,
+            "medium": 5.0,
+            "low": 2.5,
+        }.get(severity, 5.0)
+
+    def _threshold_for(self, attack_type: str) -> float:
+        return float(CACHE_ATTACK_THRESHOLDS.get(attack_type, CACHE_SIMILARITY))
+
+    def _analysis_with_cache_meta(
+        self,
+        analysis: dict,
+        hit_type: str,
+        similarity: float | None,
+        cached_attack_type: str | None,
+        reason: str,
+    ) -> dict:
+        copied = analysis.copy()
+        copied.update({
+            "cache_hit_type": hit_type,
+            "cache_similarity": similarity,
+            "cached_attack_type": cached_attack_type,
+            "cache_decision_reason": reason,
+            "cache_policy_mode": CACHE_POLICY_MODE,
+        })
+        return copied
+
+    def _semantic_decision(
+        self,
+        entry: CacheEntry,
+        context: CacheContext | None,
+        similarity: float,
+    ) -> tuple[bool, str]:
+        cached_type = entry.attack_type
+        context_type = self._primary_context_type(context)
+        threshold = self._threshold_for(context_type if context_type != "unknown" else cached_type)
+
+        if cached_type in CACHE_EXACT_ONLY_TYPES:
+            return False, f"cached_type_exact_only:{cached_type}"
+        if entry.confidence < CACHE_MIN_CONFIDENCE:
+            return False, f"cached_confidence_below_{CACHE_MIN_CONFIDENCE}"
+        if similarity < threshold:
+            return False, f"similarity<{threshold:.2f}"
+        if context is None:
+            return True, f"legacy_no_context similarity>={threshold:.2f}"
+        if context_type == "unknown":
+            return False, "unknown_context_no_semantic_reuse"
+        if context_type != "unknown" and context_type != cached_type:
+            context_family = self._rule_family(context_type, context.matched_rules if context else [])
+            if context_family != entry.rule_family:
+                return False, f"attack_type_mismatch:{context_type}!={cached_type}"
+
+        if context_type == cached_type:
+            return True, f"same_attack_type:{cached_type} similarity>={threshold:.2f}"
+        return True, f"same_rule_family:{entry.rule_family} similarity>={threshold:.2f}"
+
+    def lookup(
+        self,
+        log: NormalizedLog,
+        context: CacheContext | None = None,
+    ) -> CacheLookupResult:
         self._lookups += 1
         key = self._canonical_key(log)
         self._last_key = key
 
         exact = self._exact.get(key)
         if exact is not None:
-            self._hits += 1
-            return exact.copy(), None
+            cached_type = self._normalize_attack_type(exact.get("attack_type"))
+            context_type = self._primary_context_type(context)
+            if (
+                context is not None
+                and context_type != "unknown"
+                and context_type != cached_type
+            ):
+                self._semantic_rejects += 1
+            elif (
+                context is not None
+                and context_type == "unknown"
+                and cached_type not in {"unknown", "normal"}
+            ):
+                self._semantic_rejects += 1
+            else:
+                self._hits += 1
+                return CacheLookupResult(
+                    analysis=self._analysis_with_cache_meta(
+                        exact,
+                        "exact",
+                        1.0,
+                        cached_type,
+                        "exact_canonical_key",
+                    ),
+                    embedding=None,
+                    hit=True,
+                    hit_type="exact",
+                    similarity=1.0,
+                    cached_attack_type=cached_type,
+                    decision_reason="exact_canonical_key",
+                )
 
         emb = self._embed(key)
         if self._embedding_matrix is None or not self._entries:
-            return None, emb
+            return CacheLookupResult(None, emb, False, "miss", None, None, "empty_cache")
 
         sims = self._embedding_matrix @ emb
         best_idx = int(np.argmax(sims))
         best = float(sims[best_idx])
         best_entry = self._entries[best_idx]
+        accepted, reason = self._semantic_decision(best_entry, context, best)
 
-        if best >= CACHE_SIMILARITY:
+        if accepted:
             best_entry.hit_count += 1
             self._hits += 1
-            return best_entry.analysis.copy(), emb
-        return None, emb
+            analysis = self._analysis_with_cache_meta(
+                best_entry.analysis,
+                "semantic",
+                best,
+                best_entry.attack_type,
+                reason,
+            )
+            return CacheLookupResult(
+                analysis,
+                emb,
+                True,
+                "semantic",
+                best,
+                best_entry.attack_type,
+                reason,
+            )
 
-    def store(self, emb: np.ndarray | None, analysis: dict) -> None:
-        """Store a new cache entry after an LLM call."""
+        self._semantic_rejects += 1
+        return CacheLookupResult(
+            None,
+            emb,
+            False,
+            "rejected",
+            best,
+            best_entry.attack_type,
+            reason,
+        )
+
+    def store(
+        self,
+        emb: np.ndarray | None,
+        analysis: dict,
+        context: CacheContext | None = None,
+    ) -> None:
         if self._last_key is not None:
             self._exact[self._last_key] = analysis.copy()
         if emb is None:
             return
 
-        # Evict oldest entry if at capacity (FIFO eviction)
+        attack_type = self._normalize_attack_type(analysis.get("attack_type"))
+        confidence = self._confidence(analysis)
+        risk_score = self._risk_score(analysis, context)
+        rule_family = self._rule_family(attack_type, context.matched_rules if context else [])
+
+        if attack_type in CACHE_EXACT_ONLY_TYPES:
+            return
+        if confidence < CACHE_MIN_CONFIDENCE:
+            return
+
         if len(self._entries) >= self._max_size:
             self._entries.pop(0)
-            self._embedding_matrix = np.vstack(
-                [e.embedding.reshape(1, -1) for e in self._entries]
-            ) if self._entries else None
+            self._embedding_matrix = (
+                np.vstack([e.embedding.reshape(1, -1) for e in self._entries])
+                if self._entries else None
+            )
 
-        self._entries.append(CacheEntry(emb, analysis.copy(), datetime.now()))
+        self._entries.append(CacheEntry(
+            embedding=emb,
+            analysis=analysis.copy(),
+            created_at=datetime.now(),
+            attack_type=attack_type,
+            rule_family=rule_family,
+            confidence=confidence,
+            risk_score=risk_score,
+        ))
         row = emb.reshape(1, -1)
         if self._embedding_matrix is None:
             self._embedding_matrix = row
@@ -188,19 +452,21 @@ class SemanticCache:
             self._embedding_matrix = np.vstack([self._embedding_matrix, row])
 
     def hit_rate(self) -> float:
-        """Overall cache hit rate since initialization."""
         return self._hits / self._lookups if self._lookups else 0.0
 
     @property
     def size(self) -> int:
-        """Number of semantic entries in the cache."""
         return len(self._entries)
 
+    @property
+    def semantic_rejects(self) -> int:
+        return self._semantic_rejects
+
     def clear(self) -> None:
-        """Reset the cache."""
         self._entries.clear()
         self._exact.clear()
         self._embedding_matrix = None
         self._last_key = None
         self._lookups = 0
         self._hits = 0
+        self._semantic_rejects = 0

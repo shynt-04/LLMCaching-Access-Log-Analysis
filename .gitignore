@@ -1,6 +1,10 @@
 data/
 for_report/
-# scripts/
+scripts/
+input/*
+!input/.gitkeep
+web/node_modules/
+web/dist/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

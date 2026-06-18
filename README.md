@@ -1,92 +1,130 @@
 # LLM-Augmented Web Access Log Analysis System
 
-## Project Title
-**LLM-Augmented Web Access Log Analysis System**
-
 ## Overview
-This project provides a hybrid log detection pipeline designed to identify web attacks in access logs (e.g., Apache, Nginx). It leverages a multi-layer architecture combining rule-based heuristics, machine learning classification, and Large Language Models (LLMs) with a semantic caching mechanism to provide rapid and accurate threat detection, reducing both false positives and operational costs.
 
-## Architecture
-The system employs a 3-layer detection pipeline:
-1. **Rule-Based Engine**: Uses OWASP ModSecurity Core Rule Set (CRS) patterns and regular expressions for fast, initial filtering of known attack vectors.
-2. **Machine Learning Model**: Utilizes an optimized LightGBM classifier to evaluate behavior and content, catching complex anomalies and reducing false positives before they reach the LLM.
-3. **LLM Analysis & Semantic Caching**: Employs an LLM (Gemini or local Ollama) for deep contextual analysis of suspicious logs that bypass earlier filters. To ensure low latency and high throughput, an embedding-based Semantic Cache (using FAISS) clusters and retrieves identical or semantically similar logs, significantly reducing redundant LLM API calls and execution time.
+This project provides an access-log analysis tool for detecting web attacks in Apache/Nginx-style logs. The current advisor demo is dashboard-only: when the backend starts, it reads log files from a fixed local `input/` directory, runs the Rule + content-only LightGBM + LLM analysis pipeline, and streams alerts to the React dashboard.
+
+## Runtime Pipeline
+
+1. **Rule-Based Engine**: Fast attack pattern matching with local rules and CRS-derived rules.
+2. **Content-Only LightGBM Model**: Scores request content without behavior/bruteforce features.
+3. **Attack-Type-Aware Semantic Cache**: Reuses LLM verdicts only when the cache policy accepts the attack type and context.
+4. **LLM Analysis**: Runs on cache misses for flagged events and returns structured alert details.
+5. **Dashboard**: Shows progress, alert filters, alert details, latency/token metadata, and cache metadata.
 
 ## Features
-- **Multi-Provider LLM Integration**: Seamlessly switch between local, privacy-preserving inference (Ollama - `gemma4:e4b`) and fast, cloud-based APIs (Google Gemini).
-- **High-Performance Semantic Caching**: Uses FAISS and sentence transformers to cache LLM evaluations. This drastically reduces evaluation time for redundant log events.
-- **Alert Dashboard**: A React-based web dashboard to monitor log analysis progress, visualize alerts via WebSockets, and manage detected threats.
-- **RESTful API & WebSockets**: Robust FastAPI backend for log ingestion, asynchronous background processing.
 
-## Technology Stack
-- **Backend**: Python 3.10+, FastAPI, Uvicorn, Pydantic
-- **Machine Learning**: Scikit-Learn, LightGBM, Numpy, Scipy
-- **LLM & Embeddings**: Google Generative AI (Gemini), Ollama, FAISS (Semantic Search)
-- **Frontend**: React, Vite (communicating via WebSockets and REST APIs)
+- Dashboard-only demo flow with no user upload page.
+- Automatic analysis of files placed in `input/` when the backend starts.
+- REST and WebSocket APIs for sessions, progress, alerts, search, and metrics.
+- NVIDIA NIM runtime for the current Docker demo, including LLM analysis and semantic-cache embeddings.
+- Optional multi-provider LLM support remains available for local experiments, including local Ollama.
+- Docker packaging for a single backend + built frontend container.
 
 ## Project Structure
+
 ```text
 LLMCaching-Access-Log-Analysis/
-├── api/                  # FastAPI backend application & WebSocket manager
-├── src/                  # Core pipeline source code
-│   ├── ingestion/        # Log parsing, normalization, and source detection
-│   ├── detection/        # Rule-based and ML classification engines
-│   ├── llm/              # LLM integrations and FAISS Semantic Caching
-│   └── pipeline.py       # Main orchestrator linking all layers
-├── web/                  # React/Vite frontend Dashboard
-├── data/                 # Datasets, synthetic logs, and pre-trained models
-├── benchmark/            # Benchmarking and performance testing scripts
-├── eval/                 # Evaluation and pipeline validation scripts
-├── docker-compose.yml    # Docker services configuration
-├── requirements.txt      # Python dependencies
-└── .env                  # Environment variables configuration
+|-- api/                  # FastAPI backend and WebSocket manager
+|-- src/                  # Core pipeline source code
+|   |-- ingestion/        # Log parsing, normalization, source detection
+|   |-- detection/        # Rule-based and content-only ML detectors
+|   |-- llm/              # LLM integrations and semantic cache
+|   `-- pipeline.py       # Main orchestrator
+|-- web/                  # React/Vite dashboard frontend
+|-- input/                # Local demo log directory mounted into Docker
+|-- data/models/          # Trained content model artifact: lgbm_content.pkl
+|-- data/rules/           # Rule data
+|-- data/webattack_cvss/  # Thesis dataset splits and cache stress data
+|-- legacy/               # Archived benchmark, CLI, UI, and behavior/temporal code
+|-- Dockerfile
+|-- docker-compose.yml
+|-- requirements.txt
+`-- .env
 ```
 
 ## Environment Variables
-Create a `.env` file in the root directory with the following configurations (adjust based on your setup):
+
+Create or update `.env` in the project root:
 
 ```env
-# === LLM PROVIDER ===
-# Options: "ollama" (local, free) or "gemini" (cloud, fast)
-LLM_PROVIDER="gemini"
+LLM_PROVIDER="nvidia"
+CACHE_EMBED_PROVIDER="nvidia"
 
-# === LLM API KEYS ===
-GEMINI_API_KEY="add_key_here"
+# NVIDIA NIM settings.
+NVIDIA_API_KEY="add_key_here"
+NVIDIA_BASE_URL="https://integrate.api.nvidia.com/v1"
+NVIDIA_LLM_MODEL="google/gemma-4-31b-it"
+NVIDIA_EMBED_MODEL="nvidia/llama-nemotron-embed-1b-v2"
 
-# === LOCAL OLLAMA CONFIG ===
-OLLAMA_HOST="http://localhost:11434" # Use http://host.docker.internal:11434 inside Docker
-OLLAMA_MODEL="gemma4:e4b"
-OLLAMA_EMBED_MODEL="all-minilm"
+# Optional Ollama settings.
+# Use these for local experiments instead of NVIDIA.
+# If the app runs in Docker and Ollama runs on the host, set
+# OLLAMA_HOST="http://host.docker.internal:11434" on Docker Desktop.
+# LLM_PROVIDER="ollama"
+# CACHE_EMBED_PROVIDER="ollama"
+# OLLAMA_HOST="http://localhost:11434"
+# OLLAMA_LLM_MODEL="llama3.1:8b"
+# OLLAMA_EMBED_MODEL="nomic-embed-text"
+
+# Demo input settings.
+LOG_INPUT_DIR="input"
+LOG_SOURCE="auto"
+USE_CACHE="true"
+AUTO_START_ANALYSIS="true"
 ```
 
-## Deployment
+`docker-compose.yml` reads `LLM_PROVIDER` and `CACHE_EMBED_PROVIDER` from
+`.env`, defaulting to NVIDIA when the variables are not set.
 
-### Local Development (Manual Setup)
-**Backend:**
+For local Ollama, make sure the models are available before running the app:
+
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
+```
 
-# Start the FastAPI server
+## Docker Demo
+
+Put one or more access-log files into `input/`, then run:
+
+```bash
+docker compose up --build
+```
+
+Open:
+
+```text
+http://localhost:8000
+```
+
+The container mounts `./input` as read-only at `/app/input`. The backend creates a new analysis session at startup and the dashboard attaches to the newest session automatically.
+
+## Local Development
+
+Backend:
+
+```bash
+pip install -r requirements.txt
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Frontend:**
+Frontend:
+
 ```bash
 cd web
-# Install dependencies
 npm install
-
-# Start the development server
 npm run dev
 ```
 
-## API Reference
-The FastAPI backend exposes several endpoints to interact with the pipeline:
+For local frontend development, set `VITE_API_URL=http://localhost:8000` if needed.
 
-- `POST /api/analyze`: Upload a log file and start background processing.
-  - **Form Data**: `file` (UploadFile), `source` (auto/apache/nginx), `use_cache` (boolean).
-- `GET /api/sessions`: List all active and completed processing sessions.
-- `GET /api/metrics/{session_id}`: Fetch benchmark metrics (latency, throughput, cache hits, token usage) for a specific session.
-- `GET /api/alerts/{session_id}`: Retrieve the complete list of alerts generated during a session.
-- `WS /api/ws/{session_id}`: WebSocket endpoint to stream analysis progress and real-time alerts to the dashboard.
+## API Reference
+
+- `GET /api/sessions`: List active and completed analysis sessions.
+- `GET /api/alerts/{session_id}`: Get all alerts for a session.
+- `GET /api/alerts/{session_id}/search`: Filter, search, sort, and paginate alerts.
+- `GET /api/metrics/{session_id}`: Get processing metrics for a session.
+- `POST /api/reload-input`: Start a fresh session from the configured local input directory.
+- `WS /api/ws/{session_id}`: Stream progress and alerts to the dashboard.
+- `GET /api/health`: Health check and runtime input settings.

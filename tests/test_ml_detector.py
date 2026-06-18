@@ -20,17 +20,11 @@ def test_ml_detector_score(mock_open, mock_pickle_load):
     mock_vectorizer = MagicMock()
     mock_vectorizer.transform.return_value = "mock_sparse_matrix"
     
-    mock_behavior_model = MagicMock()
-    mock_behavior_model.predict_proba.return_value = np.array([[0.2, 0.8]])
-    
-    mock_scaler = MagicMock()
-    mock_scaler.transform.return_value = np.array([[0.5] * 8])
-
-    # First call returns content dict, second returns behavior dict
-    mock_pickle_load.side_effect = [
-        {"model": mock_content_model, "vectorizer": mock_vectorizer},
-        {"model": mock_behavior_model, "scaler": mock_scaler}
-    ]
+    mock_pickle_load.return_value = {
+        "model": mock_content_model,
+        "vectorizer": mock_vectorizer,
+        "threshold": 0.5,
+    }
 
     detector = MLDetector()
     
@@ -43,7 +37,6 @@ def test_ml_detector_score(mock_open, mock_pickle_load):
         source="nginx"
     )
     
-    content_score, behavior_score = detector.score(log, [log], 0.0)
+    content_score = detector.score(log)
     
     assert content_score == pytest.approx(0.9)
-    assert behavior_score == pytest.approx(0.8)
