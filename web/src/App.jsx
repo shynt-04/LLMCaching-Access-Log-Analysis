@@ -143,11 +143,84 @@ function App() {
     : 'Waiting for input logs'
 
   return (
+<<<<<<< HEAD
     <>
       <nav className="nav">
         <a href="/" className="nav-logo">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+=======
+    <div className="app-shell">
+      <Sidebar />
+
+      <div className="app-main">
+        <header className="topbar">
+          <a href="/" className="topbar-logo">
+            <span className="logo-mark">HUST-SOICT</span>
+            {/* <span className="logo-name"></span> */}
+          </a>
+          <div className="topbar-sep" />
+          <span className="topbar-title">Alert Dashboard</span>
+
+          <div className="topbar-right">
+            <span className="topbar-status">
+              {activeSession && <span className="live-dot" />}
+              <span>{statusText}</span>
+            </span>
+            <span className="topbar-flag" title="English">
+              <svg viewBox="0 0 60 30" xmlns="http://www.w3.org/2000/svg">
+                <clipPath id="flag-clip"><path d="M0 0v30h60V0z" /></clipPath>
+                <g clipPath="url(#flag-clip)">
+                  <path d="M0 0v30h60V0z" fill="#012169" />
+                  <path d="M0 0l60 30m0-30L0 30" stroke="#fff" strokeWidth="6" />
+                  <path d="M0 0l60 30m0-30L0 30" stroke="#C8102E" strokeWidth="4" />
+                  <path d="M30 0v30M0 15h60" stroke="#fff" strokeWidth="10" />
+                  <path d="M30 0v30M0 15h60" stroke="#C8102E" strokeWidth="6" />
+                </g>
+              </svg>
+            </span>
+            <span className="topbar-user" title="User">VA</span>
+          </div>
+        </header>
+
+        <AlertDashboard
+          alerts={alerts}
+          activeSession={activeSession}
+          apiUrl={API_URL}
+          progress={progress}
+          metrics={metrics}
+          sessionInfo={sessionInfo}
+          onReload={reloadInput}
+        />
+      </div>
+    </div>
+  )
+}
+
+function Sidebar() {
+  const icons = [
+    // { key: 'menu', label: 'Menu', path: 'M3 6h18M3 12h18M3 18h18' },
+    // { key: 'grid', label: 'Dashboard', path: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z' },
+    { key: 'alert', label: 'Alerts', path: 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0' },
+    // { key: 'eye', label: 'Search', path: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z' },
+    // { key: 'shield', label: 'Threats', path: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' },
+    // { key: 'chart', label: 'Analytics', path: 'M3 3v18h18M7 16l4-4 3 3 5-6' },
+    // { key: 'list', label: 'Reports', path: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01' },
+  ]
+  return (
+    <nav className="sidebar">
+      {icons.map((icon, i) => (
+        <button
+          key={icon.key}
+          type="button"
+          className={`sidebar-icon ${i === 2 ? 'active' : ''}`}
+          title={icon.label}
+          aria-label={icon.label}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round">
+            <path d={icon.path} />
+>>>>>>> ba2dfd7 (Update UI)
           </svg>
           DEMO APP
         </a>
