@@ -143,13 +143,6 @@ function App() {
     : 'Waiting for input logs'
 
   return (
-<<<<<<< HEAD
-    <>
-      <nav className="nav">
-        <a href="/" className="nav-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-=======
     <div className="app-shell">
       <Sidebar />
 
@@ -209,42 +202,22 @@ function Sidebar() {
   ]
   return (
     <nav className="sidebar">
-      {icons.map((icon, i) => (
+      {icons.map((icon) => (
         <button
           key={icon.key}
           type="button"
-          className={`sidebar-icon ${i === 2 ? 'active' : ''}`}
+          className={`sidebar-icon ${icon.key === 'alert' ? 'active' : ''}`}
           title={icon.label}
           aria-label={icon.label}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                strokeLinecap="round" strokeLinejoin="round">
             <path d={icon.path} />
->>>>>>> ba2dfd7 (Update UI)
           </svg>
-          DEMO APP
-        </a>
-
-        <div className="nav-links">
-          <span className="nav-link active">Alert Dashboard</span>
-        </div>
-
-        <div className="nav-status">
-          {activeSession && <span className="dot" />}
-          <span>{statusText}</span>
-        </div>
-      </nav>
-
-      <AlertDashboard
-        alerts={alerts}
-        activeSession={activeSession}
-        apiUrl={API_URL}
-        progress={progress}
-        metrics={metrics}
-        sessionInfo={sessionInfo}
-        onReload={reloadInput}
-      />
-    </>
+        </button>
+      ))}
+      <span className="sidebar-spacer" />
+    </nav>
   )
 }
 
