@@ -35,7 +35,7 @@ LLMCaching-Access-Log-Analysis/
 |-- input/                # Local demo log directory mounted into Docker
 |-- data/models/          # Trained content model artifact: lgbm_content.pkl
 |-- data/rules/           # Rule data
-|-- data/webattack_cvss/  # Thesis dataset splits and cache stress data
+|-- data/synthetic/       # Thesis synthetic dataset splits, when copied locally
 |-- legacy/               # Archived benchmark, CLI, UI, and behavior/temporal code
 |-- Dockerfile
 |-- docker-compose.yml
@@ -99,6 +99,23 @@ http://localhost:8000
 ```
 
 The container mounts `./input` as read-only at `/app/input`. The backend creates a new analysis session at startup and the dashboard attaches to the newest session automatically.
+
+## Thesis Dataset
+
+The thesis training pipeline uses the validated CSIC-inspired synthetic dataset
+(`data/synthetic/train.jsonl`, `validation.jsonl`, and `test.jsonl`). If these
+files are not copied into the current repository, `src/detection/ml/trainer.py`
+falls back to the legacy artifact directory:
+
+```text
+../LLMCaching-Access-Log-Analysis_old/LLMCaching-Access-Log-Analysis/data/synthetic/
+```
+
+Train the content model with:
+
+```bash
+python -m src.detection.ml.trainer
+```
 
 ## Local Development
 

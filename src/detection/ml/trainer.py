@@ -1,8 +1,8 @@
 """Content-only LightGBM trainer.
 
-Behavior-model training was removed from the main thesis pipeline. Use
-scripts/import_webattack_cvss.py first, then run this module or
-scripts/train_content_webattack.py to produce data/models/lgbm_content.pkl.
+The thesis pipeline trains the fast first-stage detector on the validated
+synthetic dataset built from CSIC-inspired traffic and attack payloads. The
+behavior model remains outside the main demo pipeline.
 """
 from __future__ import annotations
 
@@ -18,10 +18,28 @@ from sklearn.model_selection import train_test_split
 
 
 CONTENT_MODEL_PATH = Path("data/models/lgbm_content.pkl")
+_OLD_SYNTHETIC_TRAIN_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "LLMCaching-Access-Log-Analysis_old"
+    / "LLMCaching-Access-Log-Analysis"
+    / "data"
+    / "synthetic"
+    / "train.jsonl"
+)
 
 
 def _read_jsonl(path: str | Path) -> list[dict]:
     return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _resolve_train_path(path: str | Path) -> Path:
+    train_path = Path(path)
+    if train_path.exists():
+        return train_path
+    if str(train_path).replace("\\", "/") == "data/synthetic/train.jsonl" and _OLD_SYNTHETIC_TRAIN_PATH.exists():
+        print(f"Using legacy synthetic dataset artifact: {_OLD_SYNTHETIC_TRAIN_PATH}")
+        return _OLD_SYNTHETIC_TRAIN_PATH
+    raise FileNotFoundError(f"Training dataset not found: {train_path}")
 
 
 def _content_text(entry: dict) -> str:
@@ -45,8 +63,9 @@ def _best_threshold(y_true: np.ndarray, scores: np.ndarray) -> tuple[float, floa
     return best_t, best_f1
 
 
-def train_content_model(train_path: str = "data/webattack_cvss/train.jsonl") -> None:
-    entries = _read_jsonl(train_path)
+def train_content_model(train_path: str = "data/synthetic/train.jsonl") -> None:
+    resolved_train_path = _resolve_train_path(train_path)
+    entries = _read_jsonl(resolved_train_path)
     texts = [_content_text(entry) for entry in entries]
     labels = np.array([1 if int(entry.get("label", 0)) > 0 else 0 for entry in entries])
 
@@ -87,7 +106,7 @@ def train_content_model(train_path: str = "data/webattack_cvss/train.jsonl") -> 
             "vectorizer": vectorizer,
             "threshold": threshold,
             "taxonomy": ["normal", "attack"],
-            "source_dataset": "chYassine/WebAttack-CVSSMetrics",
+            "source_dataset": "csic_inspired_synthetic_x_prime",
         }, f)
 
     print(

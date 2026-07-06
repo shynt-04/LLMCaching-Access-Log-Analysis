@@ -724,7 +724,8 @@ button { font-family: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.col-rule .cell-ellipsis, .col-desc .cell-ellipsis { display: block; }
+.col-rule .cell-ellipsis { display: block; max-width: 200px; }
+.col-desc .cell-ellipsis { display: block; max-width: 240px; }
 
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
